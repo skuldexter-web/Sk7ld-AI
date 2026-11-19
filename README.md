@@ -26,8 +26,10 @@ The result is a single desktop app whose chat window doesn't just *talk* about s
 
 - **Cozy frosted-glass UI** — floating rounded glass cards over a blurred, theme-tinted bokeh backdrop, with real window transparency (subtle see-through to your desktop on any compositor).
 - **Hexagon system HUD** — the PC live feeds render as a honeycomb of hexagon ring-gauges (CPU · GPU · RAM · NET · DISK) around a live clock.
-- **3 themes**: **`sk7ld`** (cyan-blue + purple neon, default), **`v1ru5`** (the original green neural node, with its hidden `@v1ru5_0` sidebar link), and **`baphomet`** (crimson + gold occult-cyber). Switch live from the sidebar.
+- **3 themes**: **`sk7ld`** (cyan-blue + purple neon, default), **`v1ru5`** (the original green neural node, with its hidden `@v1ru5_0` sidebar link), and **`Cvlt of Baph0mau5`** (crimson + gold occult-cyber). Switch live from the sidebar.
 - **Editable persona** — change Sk7ld-AI's system prompt from the sidebar (**Edit Persona**) or the CLI (`persona set ...`); it's saved to `~/.config/sk7ld-ai/config.json` and used on every chat.
+- **Code Mode** — flip the sidebar switch (or `code` in the CLI) and every prompt becomes a code/script request; generated code streams in, then **Save Code** writes it out with the right extension.
+- **Runs on Windows too** — the same engine auto-detects the OS and, on Windows, exposes only Windows-capable tools and uses Windows install/launch paths. A ready-to-run Windows build ships as `Sk7ld-AI-Windows.zip`.
 - **Live weather feed** — current conditions + 3-day forecast in the HUD (via keyless wttr.in, IP-located; degrades to "offline" with no connection).
 - **Live system feeds** — CPU, GPU, RAM and ethernet (up/down) throughput update every second, with bars that turn amber/red under load. Uses `psutil` when present, else parses `/proc` + `/sys` directly.
 - **Local & private** — everything runs through your own Ollama node. No cloud, no keys.
@@ -117,7 +119,7 @@ Sk7ld-AI/
 
 ## 🎨 Themes & Models
 
-- Switch themes live from the sidebar dropdown;
+- Switch themes live from the sidebar dropdown; `v1ru5-ai` reveals the second Instagram handle above the dropdowns, exactly as in the original.
 - **Model** dropdown lists your installed Ollama tags; **Ping Models** refreshes them; **Forge New Model** pulls base models (`1.5b` → `32b`). Streaming pull progress prints into the chat.
 
 ---

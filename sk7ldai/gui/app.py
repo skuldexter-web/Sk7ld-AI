@@ -16,9 +16,11 @@ window alpha adds the genuine partial see-through to the real desktop.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 import tkinter.font as tkfont
+import tkinter.filedialog as filedialog
 from datetime import datetime
 from typing import Optional
 
@@ -31,7 +33,7 @@ from .. import orchestrator
 from ..orchestrator import analysis_prompt
 from ..control import JobControl
 from ..feeds import SystemStats, Weather, human_rate, human_bytes
-from ..ollama_client import DEFAULT_SYSTEM_PROMPT
+from ..ollama_client import DEFAULT_SYSTEM_PROMPT, CODE_SYSTEM_PROMPT, extract_code
 from .. import config
 from .dialogs import (ConfirmDialog, ToolChoiceDialog, InstallModelDialog,
                       PersonaDialog, INSTALL_OPTIONS)
@@ -72,6 +74,8 @@ class Sk7ldAIApp(ctk.CTk):
         self.client = OllamaClient(OLLAMA_BASE_URL, DEFAULT_MODEL)
         self.client.system_prompt = config.get_system_prompt()   # load saved persona
         self.is_busy = False
+        self.code_mode = False
+        self._last_code = None            # (code_text, extension)
         self.locked_target: Optional[str] = None
         self.active_control: Optional[JobControl] = None
         self._alive = True
@@ -268,6 +272,22 @@ class Sk7ldAIApp(ctk.CTk):
                                          font=self.font(12, "bold", mono=True))
         self.persona_btn.pack(padx=18, pady=(0, 10), fill="x")
         self._reg(self.persona_btn, fg_color="glass2", hover_color="hover", text_color="title")
+
+        # Code Mode: route prompts straight to code generation.
+        crow = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        crow.pack(padx=18, pady=(2, 2), fill="x")
+        self.code_switch = ctk.CTkSwitch(crow, text="CODE MODE",
+                                         font=self.font(12, "bold", mono=True),
+                                         command=self._toggle_code_mode)
+        self.code_switch.pack(side="left")
+        self._reg(self.code_switch, text_color="title", progress_color="accent",
+                  button_color="entry_text", fg_color="glass2")
+        self.save_code_btn = ctk.CTkButton(self.sidebar, text="SAVE CODE",
+                                           command=self._save_code, corner_radius=10,
+                                           state="disabled",
+                                           font=self.font(12, "bold", mono=True))
+        self.save_code_btn.pack(padx=18, pady=(2, 10), fill="x")
+        self._reg(self.save_code_btn, fg_color="glass2", hover_color="hover", text_color="title")
 
         self.hint_label = ctk.CTkLabel(
             self.sidebar, justify="left", anchor="w", font=self.font(10, mono=True),
@@ -624,13 +644,18 @@ class Sk7ldAIApp(ctk.CTk):
         self.input_entry.delete(0, "end")
         self.append_chat("You", prompt)
 
+        if self.code_mode:
+            self._start_code(prompt)
+            return
+
         plan = orchestrator.plan(prompt)
         if plan is None:
             self._start_ai_chat(prompt)
             return
         theme = get_theme(self.current_theme_name)
         target = plan.target or self.locked_target
-        choice = ToolChoiceDialog(self, plan.intent, target, theme).show()
+        actions = [a for a, _ in plan.options]
+        choice = ToolChoiceDialog(self, plan.intent, target, theme, actions=actions).show()
         if choice is None:
             self.append_chat("SK7LD-AI", "Raid called off.")
             return
@@ -657,6 +682,52 @@ class Sk7ldAIApp(ctk.CTk):
                 self.after(0, self._insert, "\n\n")
                 self.after(0, lambda: self._set_busy(False))
         threading.Thread(target=run, daemon=True).start()
+
+    # ── Code Mode ───────────────────────────────────────────────────────
+    def _toggle_code_mode(self):
+        self.code_mode = bool(self.code_switch.get())
+        self.append_chat("SYSTEM", "Code Mode ON - prompts now generate code/scripts."
+                         if self.code_mode else "Code Mode OFF - back to the console.")
+
+    def _start_code(self, prompt: str):
+        control = self._new_job()
+        self._set_busy(True)
+        self.append_chat("CODE", "")
+        buf = []
+
+        def run():
+            try:
+                for token in self.client.chat_stream(
+                        prompt, system=CODE_SYSTEM_PROMPT, few_shot=False, control=control):
+                    buf.append(token)
+                    self.after(0, self._insert, token)
+                if control.cancelled:
+                    self.after(0, self._insert, "  [stopped]")
+                else:
+                    code, ext = extract_code("".join(buf))
+                    if code:
+                        self._last_code = (code, ext)
+                        self.after(0, lambda: self.save_code_btn.configure(state="normal"))
+            finally:
+                self.after(0, self._insert, "\n\n")
+                self.after(0, lambda: self._set_busy(False))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _save_code(self):
+        if not self._last_code:
+            return
+        code, ext = self._last_code
+        path = filedialog.asksaveasfilename(
+            title="Save generated code", defaultextension=f".{ext}",
+            initialfile=f"sk7ld_code.{ext}")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(code)
+            self.append_chat("SYSTEM", f"Saved code to {os.path.basename(path)}")
+        except Exception as exc:  # noqa: BLE001
+            self.append_chat("SYSTEM ERROR", f"Could not save: {exc}")
 
     def _start_tool_run(self, action, target):
         control = self._new_job()

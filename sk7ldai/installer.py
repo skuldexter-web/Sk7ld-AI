@@ -14,14 +14,16 @@ orchestrator) must obtain explicit operator confirmation first - see
 from __future__ import annotations
 
 import os
+import sys
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
 from .arsenal import (ARSENAL, TOOL_DEPS, TOOL_ENTRYPOINTS, BIN_MAP, Tool,
-                      resolve_name)
+                      resolve_name, WIN_WINGET)
 from .control import JobControl
+from .osenv import is_windows
 
 LogFn = Callable[[str], None]
 
@@ -29,8 +31,15 @@ LogFn = Callable[[str], None]
 # and killable via the STOP button. Only one install runs at a time.
 _active_control: Optional[JobControl] = None
 
-# Where git-cloned arsenal tools live. Overridable via env for non-root installs.
-VIKING_DIR = Path(os.environ.get("SK7LD_AI_DIR", "/opt/viking"))
+# Where git-cloned arsenal tools live (OS-aware; overridable via SK7LD_AI_DIR).
+def _default_base() -> str:
+    if is_windows():
+        root = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return str(Path(root) / "Sk7ld-AI")
+    return "/opt/viking"
+
+
+VIKING_DIR = Path(os.environ.get("SK7LD_AI_DIR", _default_base()))
 ARSENAL_DIR = VIKING_DIR / "arsenal"
 
 
@@ -44,11 +53,19 @@ def is_root() -> bool:
 
 def _sudo_prefix() -> list:
     """Return ['sudo', '-n'] when we need root and aren't root, else []."""
-    if is_root():
+    if is_windows() or is_root():
         return []
     if shutil.which("sudo"):
         return ["sudo", "-n"]
     return []
+
+
+def _pip(args: list) -> list:
+    """OS-correct pip invocation. Linux needs --break-system-packages; Windows
+    uses `python -m pip` with no such flag."""
+    if is_windows():
+        return [sys.executable, "-m", "pip", "install", "-q", *args]
+    return ["pip3", "install", "-q", *args, "--break-system-packages"]
 
 
 def _run(cmd: list, log: LogFn, cwd: Optional[Path] = None, timeout: int = 1800) -> int:
@@ -135,10 +152,19 @@ def describe_install(name: str) -> str:
     pkg = tool.package
     lines = [f"{tool.name}  ({tool.category})", tool.description, ""]
     if kind == "apt":
-        lines.append(f"Method : apt-get install {pkg}")
-        lines.append("Fallback: git clone + build if the apt package is missing")
+        if is_windows():
+            wid = WIN_WINGET.get(tool.name)
+            if wid:
+                lines.append(f"Method : winget install {wid}")
+            else:
+                lines.append(f"Method : manual on Windows - see {tool.url or 'project page'}")
+        else:
+            lines.append(f"Method : apt-get install {pkg}")
+            lines.append("Fallback: git clone + build if the apt package is missing")
     elif kind == "pip":
-        lines.append(f"Method : pip3 install {pkg} --break-system-packages")
+        pipcmd = (f"python -m pip install {pkg}" if is_windows()
+                  else f"pip3 install {pkg} --break-system-packages")
+        lines.append(f"Method : {pipcmd}")
         lines.append("Fallback: git clone + requirements if pip fails")
     elif kind == "git_go":
         lines.append(f"Method : git clone {tool.url} -> go build")
@@ -170,7 +196,7 @@ def _install_tool_deps(name: str, log: LogFn) -> None:
                 if not shutil.which(p):
                     _run(_sudo_prefix() + ["apt-get", "install", "-y", "-qq", p], log)
         elif gtype == "pip":
-            _run(["pip3", "install", "-q", "--break-system-packages", *items], log)
+            _run(_pip(list(items)), log)
         elif gtype == "go":
             if shutil.which("go"):
                 for p in items:
@@ -182,8 +208,7 @@ def _install_tool_deps(name: str, log: LogFn) -> None:
 # ════════════════════════════════════════════════════════════════════════
 def _post_install(dest: Path, itype: str, log: LogFn) -> None:
     if itype == "git_python" and (dest / "requirements.txt").is_file():
-        _run(["pip3", "install", "-q", "-r", str(dest / "requirements.txt"),
-              "--break-system-packages"], log)
+        _run(_pip(["-r", str(dest / "requirements.txt")]), log)
     elif itype == "git_go" and (dest / "go.mod").is_file():
         if shutil.which("go"):
             _run(["go", "build", "./..."], log, cwd=dest)
@@ -199,8 +224,7 @@ def _post_install(dest: Path, itype: str, log: LogFn) -> None:
         elif (dest / "go.mod").is_file() and shutil.which("go"):
             _run(["go", "build", "./..."], log, cwd=dest)
         elif (dest / "requirements.txt").is_file():
-            _run(["pip3", "install", "-q", "-r", str(dest / "requirements.txt"),
-                  "--break-system-packages"], log)
+            _run(_pip(["-r", str(dest / "requirements.txt")]), log)
 
 
 def _git_clone(name: str, url: str, dest: Path, itype: str, log: LogFn) -> bool:
@@ -216,8 +240,7 @@ def _git_clone(name: str, url: str, dest: Path, itype: str, log: LogFn) -> bool:
     _install_tool_deps(name, log)
     _post_install(dest, itype, log)
     if itype in ("apt", "pip") and (dest / "requirements.txt").is_file():
-        _run(["pip3", "install", "-q", "-r", str(dest / "requirements.txt"),
-              "--break-system-packages"], log)
+        _run(_pip(["-r", str(dest / "requirements.txt")]), log)
     log(f"[OK] {name} installed via git")
     return True
 
@@ -258,6 +281,17 @@ def _install_tool_inner(name: str, log: LogFn) -> bool:
     log(f"[~] Installing {canonical}  ({tool.itype})")
 
     if kind == "apt":
+        if is_windows():
+            wid = WIN_WINGET.get(canonical)
+            if wid and shutil.which("winget"):
+                rc = _run(["winget", "install", "-e", "--id", wid, "--silent",
+                           "--accept-package-agreements", "--accept-source-agreements"], log)
+                if rc == 0 and is_available(canonical):
+                    log(f"[OK] {canonical} installed via winget")
+                    return True
+            log(f"[!] {canonical} has no automatic Windows installer here. "
+                f"Install it manually: {tool.url or 'see the project page'}")
+            return is_available(canonical)
         rc = _run(_sudo_prefix() + ["apt-get", "install", "-y", "-qq", tool.package], log)
         if rc == 0 and is_available(canonical):
             log(f"[OK] {canonical} installed via apt")
@@ -269,7 +303,7 @@ def _install_tool_inner(name: str, log: LogFn) -> bool:
         return _git_clone(canonical, tool.url, dest, "git_generic", log)
 
     if kind == "pip":
-        rc = _run(["pip3", "install", "-q", tool.package, "--break-system-packages"], log)
+        rc = _run(_pip([tool.package]), log)
         if rc == 0:
             log(f"[OK] {canonical} installed via pip")
             return True

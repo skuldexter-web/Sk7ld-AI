@@ -21,6 +21,7 @@ from typing import Callable, List, Optional, Tuple
 from .arsenal import TOOL_ENTRYPOINTS, ToolAction, resolve_name
 from .installer import ARSENAL_DIR, binary_for, is_root
 from .control import JobControl
+from .osenv import is_windows
 
 LogFn = Callable[[str], None]
 
@@ -168,6 +169,21 @@ def run_interactive(argv: List[str], log: LogFn) -> bool:
     Launch an interactive tool in a new terminal window so its TUI works.
     Returns True if a window was spawned, False if we could only print guidance.
     """
+    # Windows: open the tool in a new console (Windows Terminal if present, else cmd).
+    if is_windows():
+        win_cmd = subprocess.list2cmdline(argv)
+        try:
+            if shutil.which("wt"):
+                subprocess.Popen(["wt", "cmd", "/k", win_cmd])
+            else:
+                subprocess.Popen(f'start "Sk7ld-AI" cmd /k {win_cmd}', shell=True)
+            log(f"[OK] launched in a new console: {argv[0]}")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log(f"[!] could not open a console: {exc}")
+            log(f"    run this yourself: {win_cmd}")
+            return False
+
     has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
     cmdline = " ".join(shlex.quote(a) for a in argv)
 

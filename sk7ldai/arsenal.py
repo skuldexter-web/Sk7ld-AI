@@ -279,6 +279,63 @@ CATEGORIES = _build_categories()
 
 
 # ════════════════════════════════════════════════════════════════════════
+#  WINDOWS CAPABILITY
+#  The same engine runs on Windows; there it exposes only tools that actually
+#  work on Windows. Cross-platform language tools (pip / Go / git+Python) are
+#  included automatically; a curated allowlist adds apt-named tools that ship
+#  official Windows builds. Linux-only C/make (git_generic) and Linux-only apt
+#  tools (Wi-Fi injection, bettercap, responder, ...) are excluded.
+# ════════════════════════════════════════════════════════════════════════
+WIN_APT_ALLOW = {
+    "nmap", "masscan", "sqlmap", "commix", "ffuf", "gobuster", "dirsearch",
+    "feroxbuster", "amass", "sherlock", "hashcat", "john", "hydra", "metasploit",
+    "netexec", "impacket", "bloodhound", "bulk_extractor", "empire",
+    "rtl-sdr", "rtl_433", "multimon-ng", "whois", "ping",
+}
+# A few apt tools with a known winget id (others fall back to a manual note).
+WIN_WINGET = {
+    "nmap": "Insecure.Nmap",
+}
+
+
+# Categories that are inherently Linux (wireless injection, Tor routing, etc.)
+# are excluded from the Windows build even when the tool is a Python/Go program.
+WIN_EXCLUDE_CATEGORIES = {"WiFi Tools", "Bluetooth", "Anonymity"}
+WIN_EXCLUDE_NAMES = {
+    "responder", "mitm6", "eaphammer", "wifipumpkin3", "kali-anonsurf", "multitor",
+    "bettercap", "aircrack-ng", "hcxdumptool", "hcxtools", "pixiewps",
+}
+
+
+def windows_capable(tool: Optional[Tool]) -> bool:
+    """
+    Best-effort: a tool is exposed on Windows if it's a cross-platform language
+    tool (pip / Go / git+Python) or an allowlisted apt tool with a Windows build,
+    and NOT in a Linux-only category (Wi-Fi/Bluetooth/anonymity) or exclude list.
+    Perfectly classifying every upstream project isn't possible from metadata, so
+    this errs toward excluding the obviously-Linux ones.
+    """
+    if tool is None:
+        return False
+    if tool.category in WIN_EXCLUDE_CATEGORIES or tool.name in WIN_EXCLUDE_NAMES:
+        return False
+    if tool.install_kind in ("pip", "git_go", "git_python"):
+        return True
+    if tool.install_kind == "apt" and tool.name in WIN_APT_ALLOW:
+        return True
+    return False
+
+
+def windows_tools() -> List[str]:
+    return [name for name, t in ARSENAL.items() if windows_capable(t)]
+
+
+def available_tools(windows: bool) -> List[str]:
+    """Tool names to expose for the current platform."""
+    return windows_tools() if windows else list(ARSENAL.keys())
+
+
+# ════════════════════════════════════════════════════════════════════════
 #  ENTRYPOINTS / DEPS / ALIASES  (ported from Viking CLI)
 # ════════════════════════════════════════════════════════════════════════
 # name -> "script_relative_path|interpreter" (python3|bash|ruby|php|binary)

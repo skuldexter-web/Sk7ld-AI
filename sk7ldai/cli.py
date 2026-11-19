@@ -43,6 +43,7 @@ class VikingCLI:
         self.client = OllamaClient(OLLAMA_BASE_URL, DEFAULT_MODEL)
         self.client.system_prompt = config.get_system_prompt()   # load saved persona
         self.target: Optional[str] = None
+        self.code_mode = False
 
     # ── helpers ─────────────────────────────────────────────────────────
     def _confirm(self, title: str, body: str) -> bool:
@@ -62,6 +63,25 @@ class VikingCLI:
             sys.stdout.flush()
         print(f"{NC}\n")
 
+    def _code_oneshot(self, prompt: str):
+        from .ollama_client import CODE_SYSTEM_PROMPT, extract_code
+        print(f"{G}", end="", flush=True)
+        buf = []
+        for token in self.client.chat_stream(prompt, system=CODE_SYSTEM_PROMPT, few_shot=False):
+            sys.stdout.write(token); sys.stdout.flush(); buf.append(token)
+        print(f"{NC}\n")
+        code, ext = extract_code("".join(buf))
+        if not code:
+            return
+        path = input(f"  {Y}Save code to file? path (blank to skip): {NC}").strip()
+        if path:
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(code)
+                print(f"  {G}[OK] saved {path}{NC}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"  {R}[X] {exc}{NC}")
+
     # ── built-ins ───────────────────────────────────────────────────────
     def _status(self):
         up = "online" if self.client.is_up() else "offline"
@@ -78,10 +98,19 @@ class VikingCLI:
         print()
 
     def _arsenal(self):
-        print(f"\n{B}{Y}  WEAPON ARSENAL{NC}")
+        from .osenv import is_windows
+        win = is_windows()
+        allowed = set(arsenal.windows_tools()) if win else None
+        if win:
+            print(f"\n{B}{Y}  WEAPON ARSENAL  {D}(Windows-capable tools only){NC}")
+        else:
+            print(f"\n{B}{Y}  WEAPON ARSENAL{NC}")
         for cat, names in arsenal.CATEGORIES.items():
+            shown = [n for n in names if allowed is None or n in allowed]
+            if not shown:
+                continue
             print(f"\n  {B}{C}-- {cat} --{NC}")
-            for name in names:
+            for name in shown:
                 tag = f"{G}[installed]{NC}" if is_available(name) else f"{D}[ ]{NC}"
                 print(f"    {tag} {name}")
         print()
@@ -99,6 +128,7 @@ class VikingCLI:
   {C}persona{NC}              show the current persona (system prompt)
   {C}persona set <text>{NC}   set a new persona
   {C}persona reset{NC}        restore the default persona
+  {C}code{NC}                 toggle Code Mode (prompts -> code/scripts)
   {C}quit{NC}                 leave
 
   Anything else is classified: 'scan 10.0.0.5', 'subdomains of site.com',
@@ -209,6 +239,14 @@ class VikingCLI:
                 ok = config.set_system_prompt(new)
                 print("  [OK] persona updated" if ok
                       else "  [OK] persona updated (session only; config not writable)")
+                continue
+            if low in ("code", "code on"):
+                self.code_mode = True; print("  [OK] Code Mode ON"); continue
+            if low == "code off":
+                self.code_mode = False; print("  [OK] Code Mode OFF"); continue
+
+            if self.code_mode:
+                self._code_oneshot(text)
                 continue
 
             plan = orchestrator.plan(text)

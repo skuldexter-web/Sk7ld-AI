@@ -28,6 +28,39 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
+# Code Mode persona: turns a prompt straight into a working script/program.
+CODE_SYSTEM_PROMPT = (
+    "You are an expert senior software developer and security-tool engineer. "
+    "Given a task, output ONE complete, working, well-commented code file in a "
+    "single fenced code block tagged with the correct language, then a short "
+    "explanation after it. No placeholders, no TODOs, no partial snippets. "
+    "Default to Python unless another language is requested."
+)
+
+# language tag -> file extension (for saving generated code)
+CODE_EXT = {
+    "python": "py", "py": "py", "bash": "sh", "sh": "sh", "shell": "sh",
+    "powershell": "ps1", "ps1": "ps1", "javascript": "js", "js": "js",
+    "typescript": "ts", "ts": "ts", "html": "html", "css": "css", "c": "c",
+    "cpp": "cpp", "c++": "cpp", "csharp": "cs", "cs": "cs", "go": "go",
+    "rust": "rs", "rs": "rs", "ruby": "rb", "rb": "rb", "php": "php",
+    "java": "java", "kotlin": "kt", "json": "json", "yaml": "yaml", "yml": "yaml",
+    "sql": "sql", "perl": "pl", "lua": "lua", "dockerfile": "Dockerfile",
+}
+
+
+def extract_code(text: str):
+    """
+    Pull the first fenced code block out of an LLM reply.
+    Returns (code, extension). Falls back to the whole text as .txt.
+    """
+    import re
+    m = re.search(r"```([A-Za-z0-9_+#-]*)\s*\n(.*?)```", text, re.DOTALL)
+    if m:
+        lang = (m.group(1) or "").strip().lower()
+        return m.group(2).rstrip("\n"), CODE_EXT.get(lang, "txt")
+    return text.strip(), "txt"
+
 # A couple of few-shot turns to keep the small base model on-persona.
 FEW_SHOT = [
     {"role": "user", "content": "hey"},

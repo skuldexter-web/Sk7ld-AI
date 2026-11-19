@@ -53,8 +53,8 @@ _RAW = OrderedDict([
         "entry_bg": "#20103a", "entry_text": "#ffffff",
         "good": "#00ff66", "warn": "#ffcc00", "bad": "#ff3b6b", "glow": "#9b2dff",
     }),
-    # ── baphomet : crimson + gold occult-cyber ──────────────────────────
-    ("baphomet", {
+    # ── Cvlt of Baph0mau5 : crimson + gold occult-cyber ─────────────────
+    ("Cvlt of Baph0mau5", {
         "emoji": "⛧", "subtitle": "Sigil of the Black Goat", "show_v1ru5_ig": False,
         "bg": "#100808", "sidebar": "#1a0c0c", "panel": "#1f0e0e", "box": "#190a0a",
         "glass": "#241111", "glass2": "#1c0d0d",

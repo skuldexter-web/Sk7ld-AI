@@ -87,7 +87,8 @@ class ToolChoiceDialog(ctk.CTkToplevel):
         None                              - cancelled
     """
 
-    def __init__(self, master, intent: Intent, target: Optional[str], theme: dict):
+    def __init__(self, master, intent: Intent, target: Optional[str], theme: dict,
+                 actions=None):
         super().__init__(master)
         self.selected: Optional[Tuple[str, Optional[ToolAction], Optional[str]]] = None
         self._intent = intent
@@ -127,7 +128,7 @@ class ToolChoiceDialog(ctk.CTkToplevel):
                                         border_color=theme["border"], border_width=1)
         scroll.pack(padx=20, pady=6, fill="both", expand=True)
 
-        for action in intent.actions:
+        for action in (actions if actions is not None else intent.actions):
             self._add_option(scroll, action)
 
         bottom = ctk.CTkFrame(self, fg_color="transparent")

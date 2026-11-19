@@ -41,12 +41,19 @@ class Plan:
 
 
 def plan(text: str) -> Optional[Plan]:
-    """Return a Plan if the text maps to a tool intent, else None (plain chat)."""
+    """Return a Plan if the text maps to a tool intent, else None (plain chat).
+    On Windows, options are limited to Windows-capable tools."""
+    from .osenv import is_windows
     intent = arsenal.detect_intent(text)
     if intent is None:
         return None
+    actions = intent.actions
+    if is_windows():
+        actions = [a for a in actions if arsenal.windows_capable(arsenal.find_tool(a.tool))]
+        if not actions:
+            return None   # nothing Windows-capable for this intent -> plain chat
     target = arsenal.extract_target(text, intent.target_kind)
-    options = [(a, installer.is_available(a.tool)) for a in intent.actions]
+    options = [(a, installer.is_available(a.tool)) for a in actions]
     return Plan(intent=intent, target=target, options=options)
 
 
