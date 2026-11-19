@@ -45,15 +45,27 @@ The result is a single desktop app whose chat window doesn't just *talk* about s
 
 ## 🚀 Install
 
+One repo runs on **both Linux and Windows** — the same engine auto-detects the OS and adapts its tools, paths and installers.
+
+**Linux / Kali / Debian**
+
 ```bash
 git clone https://github.com/skuldexter-web/Sk7ld-AI.git
 cd Sk7ld-AI
 sudo bash install.sh
 ```
 
-The bootstrap installs Python + CustomTkinter, Ollama, and pulls the default base model. It does **not** mass-install offensive tools — those install on-demand, with your confirmation, from inside the app.
+**Windows** (PowerShell, in the repo folder)
 
-Manual route:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+See [`README-WINDOWS.md`](README-WINDOWS.md) for the Windows specifics (it exposes only Windows-capable tools — the full list is in [`windows_tools.txt`](windows_tools.txt)).
+
+The bootstrap installs Python + CustomTkinter + psutil + Pillow, installs Ollama, and pulls the default base model. It does **not** mass-install offensive tools — those install on-demand, with your confirmation, from inside the app.
+
+Manual route (either OS):
 
 ```bash
 pip install -r requirements.txt      # or: pip install .
@@ -65,9 +77,14 @@ pip install -r requirements.txt      # or: pip install .
 ## 🖥️ Usage
 
 ```bash
+# Linux
 python3 sk7ld_ai.py          # GUI
 python3 sk7ld_ai.py --cli     # headless terminal mode
 sk7ld-ai                      # if install.sh made the launcher
+
+# Windows
+run.bat                       # GUI
+run.bat --cli                 # headless terminal mode
 ```
 
 **Talk to it like an operator:**
