@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sk7ld-AI
+GenericName=Local-AI Security Console
+Comment=Multi-theme GUI/CLI red-team arsenal orchestrator powered by Ollama
+Exec=sk7ld-ai
+Icon=utilities-terminal
+Terminal=false
+Categories=Security;Development;Network;
+Keywords=security;pentest;redteam;ollama;sdr;wardriving;

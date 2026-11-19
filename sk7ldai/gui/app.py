@@ -1,0 +1,730 @@
+"""
+app.py - Sk7ld-AI main window (cozy frosted-glass edition).
+
+Floating glass cards over a blurred, theme-tinted bokeh backdrop, with real
+window transparency so the desktop shows through subtly:
+
+  * LEFT   sidebar card - identity, theme (sk7ld / v1ru5 / baphomet), model, actions
+  * CENTER console card - the orchestration chat (intent -> tool -> run + STOP)
+  * RIGHT  HUD cards    - weather forecast + a honeycomb of hexagon ring-gauges
+                          (CPU / GPU / RAM / NET / DISK around a live clock)
+
+Note: Tk can't blur the live desktop behind individual panels, so the "frosted"
+look is produced by the in-window bokeh backdrop plus the glass card palette;
+window alpha adds the genuine partial see-through to the real desktop.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+import tkinter.font as tkfont
+from datetime import datetime
+from typing import Optional
+
+import customtkinter as ctk
+
+from .. import DEFAULT_MODEL, OLLAMA_BASE_URL, __app_name__, __version__
+from ..themes import THEMES, DEFAULT_THEME, SOCIAL_LINKS, get_theme
+from ..ollama_client import OllamaClient
+from .. import orchestrator
+from ..orchestrator import analysis_prompt
+from ..control import JobControl
+from ..feeds import SystemStats, Weather, human_rate, human_bytes
+from ..ollama_client import DEFAULT_SYSTEM_PROMPT
+from .. import config
+from .dialogs import (ConfirmDialog, ToolChoiceDialog, InstallModelDialog,
+                      PersonaDialog, INSTALL_OPTIONS)
+from .visuals import Honeycomb, make_ambient
+
+try:
+    from PIL import Image  # noqa: F401
+    _HAS_PIL = True
+except Exception:  # noqa: BLE001
+    _HAS_PIL = False
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("dark-blue")
+
+_MONO_PREF = ["JetBrains Mono", "Fira Code", "Hack", "Source Code Pro",
+              "DejaVu Sans Mono", "Consolas", "Menlo", "Courier New"]
+STATS_INTERVAL_MS = 1000
+WEATHER_INTERVAL_S = 900
+WINDOW_ALPHA = 0.95          # subtle see-through (needs a desktop compositor)
+CARD_RADIUS = 16
+
+
+def _net_compact(bps: float) -> str:
+    if bps < 1000:
+        return f"{bps:.0f} B"
+    if bps < 1_000_000:
+        return f"{bps/1000:.0f} k"
+    return f"{bps/1_000_000:.1f} M"
+
+
+class Sk7ldAIApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.current_theme_name = DEFAULT_THEME
+        theme = get_theme(self.current_theme_name)
+
+        self.client = OllamaClient(OLLAMA_BASE_URL, DEFAULT_MODEL)
+        self.client.system_prompt = config.get_system_prompt()   # load saved persona
+        self.is_busy = False
+        self.locked_target: Optional[str] = None
+        self.active_control: Optional[JobControl] = None
+        self._alive = True
+        self._themed = []
+        self.mono = self._pick_mono()
+
+        self.stats = SystemStats()
+        self.weather = Weather()
+        self._wx_temp: Optional[str] = None
+        self._bg_img = None
+        self._bg_size = (0, 0)
+        self._cfg_job = None
+
+        self.title(f"{__app_name__} // Digital Longship v{__version__}")
+        self.geometry("1380x840")
+        self.minsize(1180, 720)
+        self.configure(fg_color=theme["bg"])
+        try:
+            self.attributes("-alpha", WINDOW_ALPHA)
+        except Exception:
+            pass
+
+        # ambient background (behind everything)
+        self._bg_label = ctk.CTkLabel(self, text="")
+        self._bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self._build_sidebar()
+        self._build_center()
+        self._build_hud()
+
+        self._apply_theme()
+        self._render_ambient(force=True)
+        self.fetch_models()
+        self.after(800, self.check_first_run)
+        self._greet()
+
+        self.after(200, self._tick_system)
+        threading.Thread(target=self._weather_loop, daemon=True).start()
+        self.bind("<Configure>", self._on_configure)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  HELPERS
+    # ════════════════════════════════════════════════════════════════════
+    def _pick_mono(self) -> Optional[str]:
+        try:
+            fams = set(tkfont.families())
+        except Exception:
+            return None
+        for f in _MONO_PREF:
+            if f in fams:
+                return f
+        return None
+
+    def font(self, size: int, weight: str = "normal", mono: bool = False,
+             slant: str = "roman"):
+        kw = {"size": size, "weight": weight, "slant": slant}
+        if mono and self.mono:
+            kw["family"] = self.mono
+        return ctk.CTkFont(**kw)
+
+    def _reg(self, widget, **propmap):
+        self._themed.append((widget, propmap))
+        return widget
+
+    def _apply_theme(self):
+        th = get_theme(self.current_theme_name)
+        for widget, pm in self._themed:
+            try:
+                widget.configure(**{prop: th[key] for prop, key in pm.items()})
+            except Exception:
+                pass
+
+    def _card(self, parent, **grid):
+        c = ctk.CTkFrame(parent, corner_radius=CARD_RADIUS, border_width=1)
+        self._reg(c, fg_color="glass", border_color="border")
+        if grid:
+            c.grid(**grid)
+        return c
+
+    def _section_header(self, parent, text: str):
+        wrap = ctk.CTkFrame(parent, fg_color="transparent")
+        lbl = ctk.CTkLabel(wrap, text=text.upper(), anchor="w",
+                           font=self.font(12, "bold", mono=True))
+        lbl.pack(fill="x", padx=2)
+        self._reg(lbl, text_color="title")
+        bar = ctk.CTkFrame(wrap, height=2, corner_radius=2)
+        bar.pack(fill="x", padx=2, pady=(3, 0))
+        self._reg(bar, fg_color="accent")
+        return wrap
+
+    # ════════════════════════════════════════════════════════════════════
+    #  AMBIENT BACKGROUND
+    # ════════════════════════════════════════════════════════════════════
+    def _render_ambient(self, force: bool = False):
+        if not _HAS_PIL:
+            return
+        w = max(self.winfo_width(), 1); h = max(self.winfo_height(), 1)
+        if w < 50 or h < 50:
+            w, h = 1380, 840
+        if not force and abs(w - self._bg_size[0]) < 12 and abs(h - self._bg_size[1]) < 12:
+            return
+        img = make_ambient(w, h, get_theme(self.current_theme_name))
+        if img is None:
+            return
+        self._bg_size = (w, h)
+        self._bg_img = ctk.CTkImage(light_image=img, dark_image=img, size=(w, h))
+        self._bg_label.configure(image=self._bg_img)
+        self._bg_label.lower()
+
+    def _on_configure(self, event):
+        if event.widget is not self:
+            return
+        if self._cfg_job is not None:
+            self.after_cancel(self._cfg_job)
+        self._cfg_job = self.after(180, lambda: self._render_ambient())
+
+    # ════════════════════════════════════════════════════════════════════
+    #  SIDEBAR
+    # ════════════════════════════════════════════════════════════════════
+    def _build_sidebar(self):
+        th = get_theme(self.current_theme_name)
+        self.sidebar = self._card(self, row=0, column=0, sticky="nsew",
+                                  padx=(14, 7), pady=14)
+        self.sidebar.configure(width=288)
+        self.sidebar.grid_propagate(False)
+
+        self.title_label = ctk.CTkLabel(self.sidebar, text="",
+                                        font=self.font(19, "bold", mono=True))
+        self.title_label.pack(padx=18, pady=(18, 2))
+        self._reg(self.title_label, text_color="title")
+
+        self.subtitle_label = ctk.CTkLabel(self.sidebar, text=th["subtitle"],
+                                           font=self.font(11, slant="italic"))
+        self.subtitle_label.pack(padx=18, pady=(0, 12))
+        self._reg(self.subtitle_label, text_color="sub_col")
+
+        self.github_label = ctk.CTkLabel(self.sidebar, text=SOCIAL_LINKS["github"],
+                                         font=self.font(10, mono=True), anchor="w")
+        self.github_label.pack(padx=18, pady=(2, 0), anchor="w")
+        self._reg(self.github_label, text_color="title")
+
+        self.insta_label = ctk.CTkLabel(self.sidebar, text=SOCIAL_LINKS["instagram"],
+                                        font=self.font(10, mono=True), anchor="w")
+        self.insta_label.pack(padx=18, pady=(0, 2), anchor="w")
+        self._reg(self.insta_label, text_color="sub_col")
+
+        self.insta2_label = ctk.CTkLabel(self.sidebar, text=SOCIAL_LINKS["instagram_v1ru5"],
+                                         font=self.font(10, mono=True), anchor="w")
+        self._reg(self.insta2_label, text_color="sub_col")
+        if th["show_v1ru5_ig"]:
+            self.insta2_label.pack(padx=18, pady=(0, 10), anchor="w")
+
+        self.theme_label = ctk.CTkLabel(self.sidebar, text="THEME",
+                                        font=self.font(11, "bold", mono=True), anchor="w")
+        self.theme_label.pack(padx=18, pady=(14, 2), anchor="w")
+        self._reg(self.theme_label, text_color="title")
+        self.theme_dropdown = ctk.CTkOptionMenu(
+            self.sidebar, values=list(THEMES.keys()), command=self.change_theme,
+            font=self.font(12, mono=True), corner_radius=10)
+        self.theme_dropdown.set(self.current_theme_name)
+        self.theme_dropdown.pack(padx=18, pady=(0, 10), fill="x")
+        self._reg(self.theme_dropdown, fg_color="glass2", button_color="accent",
+                  button_hover_color="hover", text_color="entry_text")
+
+        self.model_label = ctk.CTkLabel(self.sidebar, text="MODEL",
+                                        font=self.font(11, "bold", mono=True), anchor="w")
+        self.model_label.pack(padx=18, pady=(4, 2), anchor="w")
+        self._reg(self.model_label, text_color="title")
+        self.model_dropdown = ctk.CTkOptionMenu(
+            self.sidebar, values=[DEFAULT_MODEL], command=self._on_model_change,
+            font=self.font(12, mono=True), corner_radius=10)
+        self.model_dropdown.pack(padx=18, pady=(0, 12), fill="x")
+        self._reg(self.model_dropdown, fg_color="glass2", button_color="accent",
+                  button_hover_color="hover", text_color="entry_text")
+
+        self.refresh_btn = ctk.CTkButton(self.sidebar, text="PING MODELS",
+                                         command=self.fetch_models, corner_radius=10,
+                                         font=self.font(12, "bold", mono=True))
+        self.refresh_btn.pack(padx=18, pady=6, fill="x")
+        self._reg(self.refresh_btn, fg_color="glass2", hover_color="hover", text_color="title")
+
+        self.install_btn = ctk.CTkButton(self.sidebar, text="FORGE NEW MODEL",
+                                         command=self.open_install_dialog, corner_radius=10,
+                                         font=self.font(12, "bold", mono=True))
+        self.install_btn.pack(padx=18, pady=(0, 6), fill="x")
+        self._reg(self.install_btn, fg_color="glass2", hover_color="hover", text_color="title")
+
+        self.persona_btn = ctk.CTkButton(self.sidebar, text="EDIT PERSONA",
+                                         command=self.open_persona_dialog, corner_radius=10,
+                                         font=self.font(12, "bold", mono=True))
+        self.persona_btn.pack(padx=18, pady=(0, 10), fill="x")
+        self._reg(self.persona_btn, fg_color="glass2", hover_color="hover", text_color="title")
+
+        self.hint_label = ctk.CTkLabel(
+            self.sidebar, justify="left", anchor="w", font=self.font(10, mono=True),
+            text="> type an action:\n  scan 10.0.0.5\n  subdomains of site.com\n"
+                 "  check site.com for vulns\n> or just chat.")
+        self.hint_label.pack(padx=18, pady=(14, 0), anchor="w")
+        self._reg(self.hint_label, text_color="dim")
+
+    # ════════════════════════════════════════════════════════════════════
+    #  CENTER (console card + input row)
+    # ════════════════════════════════════════════════════════════════════
+    def _build_center(self):
+        col = ctk.CTkFrame(self, fg_color="transparent")
+        col.grid(row=0, column=1, sticky="nsew", padx=7, pady=14)
+        col.grid_rowconfigure(0, weight=1)
+        col.grid_columnconfigure(0, weight=1)
+
+        card = self._card(col, row=0, column=0, sticky="nsew")
+        card.grid_rowconfigure(1, weight=1)
+        card.grid_columnconfigure(0, weight=1)
+        self._section_header(card, "Console").grid(row=0, column=0, sticky="ew",
+                                                    padx=16, pady=(14, 8))
+        self.chat_box = ctk.CTkTextbox(card, font=self.font(13, mono=True),
+                                       border_width=0, wrap="word", corner_radius=10,
+                                       fg_color="transparent")
+        self.chat_box.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
+        self.chat_box.configure(state="disabled")
+        self._reg(self.chat_box, text_color="text")
+
+        self.loading_label = ctk.CTkLabel(card, text="", anchor="w",
+                                          font=self.font(12, mono=True, slant="italic"))
+        self.loading_label.grid(row=2, column=0, sticky="w", padx=16, pady=(0, 10))
+        self._reg(self.loading_label, text_color="title")
+
+        # input row (separate floating pill + buttons)
+        row = ctk.CTkFrame(col, fg_color="transparent")
+        row.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        row.grid_columnconfigure(0, weight=1)
+
+        self.input_entry = ctk.CTkEntry(
+            row, placeholder_text="enter prompt or action...",
+            font=self.font(14, mono=True), height=46, border_width=1, corner_radius=CARD_RADIUS)
+        self.input_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        self.input_entry.bind("<Return>", lambda e: self.send_message())
+        self._reg(self.input_entry, fg_color="glass", text_color="entry_text",
+                  border_color="border")
+
+        self.send_btn = ctk.CTkButton(
+            row, text="EXECUTE", width=120, height=46, corner_radius=CARD_RADIUS,
+            font=self.font(13, "bold", mono=True), command=self.send_message)
+        self.send_btn.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self._reg(self.send_btn, fg_color="accent", text_color="accent_text", hover_color="hover")
+
+        self.stop_btn = ctk.CTkButton(
+            row, text="■ STOP", width=96, height=46, corner_radius=CARD_RADIUS,
+            fg_color="#8b1a1a", text_color="#ffffff", hover_color="#b22222",
+            font=self.font(13, "bold", mono=True), command=self.stop_current,
+            state="disabled")
+        self.stop_btn.grid(row=0, column=2, sticky="e")
+
+    # ════════════════════════════════════════════════════════════════════
+    #  HUD (right): weather card + honeycomb card
+    # ════════════════════════════════════════════════════════════════════
+    def _build_hud(self):
+        col = ctk.CTkFrame(self, fg_color="transparent", width=316)
+        col.grid(row=0, column=2, sticky="nsew", padx=(7, 14), pady=14)
+        col.grid_propagate(False)
+
+        # ── Weather card ──
+        wc = self._card(col)
+        wc.pack(fill="x", pady=(0, 12))
+        self._section_header(wc, "Weather").pack(fill="x", padx=14, pady=(12, 6))
+        self.w_loc = ctk.CTkLabel(wc, text="locating...", anchor="w",
+                                  font=self.font(11, mono=True))
+        self.w_loc.pack(fill="x", padx=14, pady=(0, 0))
+        self._reg(self.w_loc, text_color="dim")
+        row = ctk.CTkFrame(wc, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(0, 2))
+        self.w_temp = ctk.CTkLabel(row, text="--°", font=self.font(40, "bold", mono=True))
+        self.w_temp.pack(side="left")
+        self._reg(self.w_temp, text_color="title")
+        self.w_desc = ctk.CTkLabel(row, text="", font=self.font(12), justify="left")
+        self.w_desc.pack(side="left", padx=(10, 0))
+        self._reg(self.w_desc, text_color="text")
+        self.w_feels = ctk.CTkLabel(wc, text="", anchor="w", font=self.font(10, mono=True))
+        self.w_feels.pack(fill="x", padx=14, pady=(0, 8))
+        self._reg(self.w_feels, text_color="sub_col")
+        self.w_days = ctk.CTkFrame(wc, fg_color="transparent")
+        self.w_days.pack(fill="x", padx=14, pady=(0, 12))
+        self.w_day_rows = []
+        for _ in range(3):
+            r = ctk.CTkLabel(self.w_days, text="", anchor="w", font=self.font(10, mono=True))
+            r.pack(fill="x")
+            self._reg(r, text_color="text")
+            self.w_day_rows.append(r)
+
+        # ── System honeycomb card ──
+        sc = self._card(col)
+        sc.pack(fill="both", expand=True)
+        self._section_header(sc, "System Feed").pack(fill="x", padx=14, pady=(12, 6))
+        holder = ctk.CTkFrame(sc, fg_color="transparent")
+        holder.pack(expand=True)
+        self.honey = Honeycomb(holder, get_theme(self.current_theme_name))
+        self.honey.pack(padx=6, pady=(0, 6))
+        self.sys_backend = ctk.CTkLabel(sc, text="", anchor="e", font=self.font(9, mono=True))
+        self.sys_backend.pack(fill="x", padx=14, pady=(0, 8))
+        self._reg(self.sys_backend, text_color="dim")
+
+    # ════════════════════════════════════════════════════════════════════
+    #  LIVE FEEDS
+    # ════════════════════════════════════════════════════════════════════
+    def _tick_system(self):
+        if not self._alive:
+            return
+        threading.Thread(target=self._sample_and_push, daemon=True).start()
+        self.after(STATS_INTERVAL_MS, self._tick_system)
+
+    def _sample_and_push(self):
+        try:
+            data = self.stats.sample()
+        except Exception:
+            return
+        if self._alive:
+            self.after(0, self._update_system, data)
+
+    @staticmethod
+    def _ckey(pct: float) -> str:
+        return "bad" if pct >= 90 else "warn" if pct >= 70 else "accent"
+
+    def _update_system(self, d: dict):
+        if not self._alive:
+            return
+        try:
+            self.honey.set("cpu", d["cpu"], f"{d['cpu']:.0f}%", "CPU", self._ckey(d["cpu"]))
+            if d["gpu"] is None:
+                self.honey.set("gpu", None, "n/a", "GPU", "dim")
+            else:
+                self.honey.set("gpu", d["gpu"], f"{d['gpu']:.0f}%", "GPU", self._ckey(d["gpu"]))
+            self.honey.set("ram", d["ram_pct"], f"{d['ram_pct']:.0f}%", "RAM", self._ckey(d["ram_pct"]))
+            self.honey.set("disk", d["disk_pct"], f"{d['disk_pct']:.0f}%", "DISK", self._ckey(d["disk_pct"]))
+            netpct = min(100.0, d["net_down"] / (5 * 1024 * 1024) * 100)
+            self.honey.set("net", netpct, _net_compact(d["net_down"]), "NET↓", "glow")
+            now = datetime.now()
+            self.honey.set_clock(now.strftime("%H:%M"), now.strftime("%d %b"), now.second)
+            self.sys_backend.configure(text=f"src: {d['backend']}")
+        except Exception:
+            pass
+
+    def _weather_loop(self):
+        while self._alive:
+            data = self.weather.fetch()
+            if self._alive:
+                self.after(0, self._update_weather, data)
+            for _ in range(WEATHER_INTERVAL_S):
+                if not self._alive:
+                    return
+                time.sleep(1)
+
+    def _update_weather(self, w: Optional[dict]):
+        if not self._alive:
+            return
+        try:
+            if w is None:
+                self.w_loc.configure(text="weather offline")
+                self.w_temp.configure(text="--°")
+                self.w_desc.configure(text="no connection")
+                self.w_feels.configure(text="")
+                for r in self.w_day_rows:
+                    r.configure(text="")
+                self.honey.set("weather", None, "--°", "WX", "accent2")
+                return
+            self.w_loc.configure(text=f"◉ {w['location']}")
+            self.w_temp.configure(text=f"{w['temp']}°")
+            self.w_desc.configure(text=w["desc"])
+            self.w_feels.configure(
+                text=f"feels {w['feels']}° · hum {w['humidity']}% · wind {w['wind']}km/h")
+            for row, day in zip(self.w_day_rows, w["days"]):
+                row.configure(text=f"{day['date'][5:]}  {day['hi']:>3}°/{day['lo']:>3}°  "
+                                   f"{day['desc'][:16]}")
+            try:
+                t = float(w["temp"]); pct = max(0.0, min(100.0, (t + 10) / 50 * 100))
+            except Exception:
+                pct = None
+            self.honey.set("weather", pct, f"{w['temp']}°", "WX", "accent2")
+        except Exception:
+            pass
+
+    # ════════════════════════════════════════════════════════════════════
+    #  GREETING / TITLE
+    # ════════════════════════════════════════════════════════════════════
+    def _greet(self):
+        self._refresh_title()
+        self.append_chat("SK7LD-AI",
+                         "The longship is crewed. Name a target and the raid begins.\n"
+                         "Try: 'scan 192.168.1.10', 'find subdomains of example.com', "
+                         "'check example.com for vulns', or just chat.")
+
+    def _refresh_title(self):
+        th = get_theme(self.current_theme_name)
+        self.title_label.configure(
+            text=f"{th['emoji']}  {self.current_theme_name.upper()}  {th['emoji']}")
+
+    # ════════════════════════════════════════════════════════════════════
+    #  THEMING
+    # ════════════════════════════════════════════════════════════════════
+    def change_theme(self, selected_theme: str):
+        self.current_theme_name = selected_theme
+        th = get_theme(selected_theme)
+        self.configure(fg_color=th["bg"])
+        self._apply_theme()
+        self.honey.retheme(th)
+        self._refresh_title()
+        self.subtitle_label.configure(text=th["subtitle"])
+        if th["show_v1ru5_ig"]:
+            self.insta2_label.pack(padx=18, pady=(0, 10), anchor="w", before=self.theme_label)
+        else:
+            self.insta2_label.pack_forget()
+        self._render_ambient(force=True)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  MODELS
+    # ════════════════════════════════════════════════════════════════════
+    def _on_model_change(self, value: str):
+        self.client.model = value
+
+    def fetch_models(self):
+        def run():
+            models = self.client.list_models()
+            if models and self._alive:
+                self.after(0, lambda: self._apply_models(models))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _apply_models(self, models):
+        self.model_dropdown.configure(values=models)
+        if DEFAULT_MODEL in models:
+            self.model_dropdown.set(DEFAULT_MODEL); self.client.model = DEFAULT_MODEL
+        else:
+            self.model_dropdown.set(models[0]); self.client.model = models[0]
+
+    def check_first_run(self):
+        models = self.client.list_models()
+        if models is None:
+            return
+        known = [tag for tag, _ in INSTALL_OPTIONS.values()]
+        if not any(m in known for m in models):
+            self.open_install_dialog()
+
+    def open_install_dialog(self):
+        tag = InstallModelDialog(self, get_theme(self.current_theme_name)).show()
+        if tag:
+            self.install_model(tag)
+
+    def open_persona_dialog(self):
+        res = PersonaDialog(self, self.client.system_prompt,
+                            get_theme(self.current_theme_name)).show()
+        if res is None:
+            return
+        kind, text = res
+        if kind == "reset":
+            config.reset_system_prompt()
+            self.client.system_prompt = DEFAULT_SYSTEM_PROMPT
+            self.append_chat("SYSTEM", "Persona reset to default.")
+        else:
+            self.client.system_prompt = text
+            saved = config.set_system_prompt(text)
+            self.append_chat("SYSTEM", "Persona updated." if saved
+                             else "Persona updated for this session (could not write config).")
+
+    def install_model(self, tag: str):
+        control = self._new_job()
+        self._set_busy(True)
+        self.update_loading_animation(True, f"Forging {tag}...")
+        self.append_chat("SYSTEM", f"Forging model {tag} via Ollama... this can take a while.")
+
+        def run():
+            ok = self.client.pull_model(
+                tag, on_progress=lambda line: self.after(0, self._append_line, f"  {line}"),
+                control=control)
+            if ok:
+                self.after(0, self.append_chat, "SYSTEM", f"Model {tag} installed.")
+                self.after(0, self.fetch_models)
+            elif control.cancelled:
+                self.after(0, self.append_chat, "SYSTEM", f"Pull of {tag} stopped.")
+            else:
+                self.after(0, self.append_chat, "SYSTEM ERROR", f"Install failed for {tag}.")
+            self.after(0, lambda: self._set_busy(False))
+        threading.Thread(target=run, daemon=True).start()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  LOADING ANIMATION
+    # ════════════════════════════════════════════════════════════════════
+    def update_loading_animation(self, active: bool, custom_text: Optional[str] = None):
+        if not active:
+            self.loading_label.configure(text="")
+            return
+        chars = ["⠋", "⠙", "⠹", "⠸", "⠼",
+                 "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+        def animate(step=0):
+            if not self.is_busy or not self._alive:
+                self.loading_label.configure(text="")
+                return
+            icon = chars[step % len(chars)]
+            self.loading_label.configure(text=f"{icon} {custom_text or 'Processing node parameters...'}")
+            self.after(100, lambda: animate(step + 1))
+        animate()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  CHAT OUTPUT
+    # ════════════════════════════════════════════════════════════════════
+    def append_chat(self, sender: str, message: str):
+        self.chat_box.configure(state="normal")
+        self.chat_box.insert("end", f"{sender}:\n{message}\n\n")
+        self.chat_box.see("end")
+        self.chat_box.configure(state="disabled")
+
+    def _append_line(self, line: str):
+        self.chat_box.configure(state="normal")
+        self.chat_box.insert("end", line + "\n")
+        self.chat_box.see("end")
+        self.chat_box.configure(state="disabled")
+
+    def _insert(self, text: str):
+        self.chat_box.configure(state="normal")
+        self.chat_box.insert("end", text)
+        self.chat_box.see("end")
+        self.chat_box.configure(state="disabled")
+
+    def _set_busy(self, busy: bool):
+        self.is_busy = busy
+        self.send_btn.configure(state="disabled" if busy else "normal")
+        self.stop_btn.configure(state="normal" if busy else "disabled")
+        self.update_loading_animation(busy)
+
+    def _new_job(self) -> JobControl:
+        self.active_control = JobControl()
+        return self.active_control
+
+    def stop_current(self):
+        if self.active_control is not None:
+            self.active_control.cancel()
+            self._append_line("[!] STOP requested - terminating current job...")
+            self.loading_label.configure(text="Stopping...")
+
+    # ════════════════════════════════════════════════════════════════════
+    #  SEND / ORCHESTRATION
+    # ════════════════════════════════════════════════════════════════════
+    def send_message(self):
+        if self.is_busy:
+            return
+        prompt = self.input_entry.get().strip()
+        if not prompt:
+            return
+        self.input_entry.delete(0, "end")
+        self.append_chat("You", prompt)
+
+        plan = orchestrator.plan(prompt)
+        if plan is None:
+            self._start_ai_chat(prompt)
+            return
+        theme = get_theme(self.current_theme_name)
+        target = plan.target or self.locked_target
+        choice = ToolChoiceDialog(self, plan.intent, target, theme).show()
+        if choice is None:
+            self.append_chat("SK7LD-AI", "Raid called off.")
+            return
+        kind, action, chosen_target = choice
+        if kind == "chat":
+            self._start_ai_chat(prompt)
+            return
+        if chosen_target:
+            self.locked_target = chosen_target
+        self._start_tool_run(action, chosen_target)
+
+    def _start_ai_chat(self, prompt: str):
+        control = self._new_job()
+        self._set_busy(True)
+        self.append_chat("AI", "")
+
+        def run():
+            try:
+                for token in self.client.chat_stream(prompt, control=control):
+                    self.after(0, self._insert, token)
+                if control.cancelled:
+                    self.after(0, self._insert, "  [stopped]")
+            finally:
+                self.after(0, self._insert, "\n\n")
+                self.after(0, lambda: self._set_busy(False))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _start_tool_run(self, action, target):
+        control = self._new_job()
+        self._set_busy(True)
+        self.append_chat("SK7LD-AI", f"Preparing {action.tool}...")
+
+        def log(line: str):
+            self.after(0, self._append_line, line)
+
+        def run():
+            try:
+                output = orchestrator.run_action(
+                    action, target, log, confirm_install=self._confirm_on_main,
+                    control=control)
+                if control.cancelled:
+                    return
+                if output and action.mode != "interactive":
+                    if self._confirm_on_main(
+                            "Analyse output?",
+                            f"Feed the {action.tool} output to {self.client.model} "
+                            f"for a tactical breakdown?"):
+                        self.after(0, self._stream_analysis, action.tool, target, output)
+                        return
+            finally:
+                self.after(0, lambda: self._set_busy(False))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _stream_analysis(self, tool, target, output):
+        control = self._new_job()
+        self._set_busy(True)
+        self.append_chat("AI", "")
+        prompt = analysis_prompt(tool, target, output)
+
+        def run():
+            try:
+                for token in self.client.chat_stream(prompt, control=control):
+                    self.after(0, self._insert, token)
+                if control.cancelled:
+                    self.after(0, self._insert, "  [stopped]")
+            finally:
+                self.after(0, self._insert, "\n\n")
+                self.after(0, lambda: self._set_busy(False))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _confirm_on_main(self, title: str, body: str) -> bool:
+        event = threading.Event()
+        holder = {"val": False}
+
+        def ask():
+            holder["val"] = ConfirmDialog(self, title, body,
+                                          get_theme(self.current_theme_name)).show()
+            event.set()
+        self.after(0, ask)
+        event.wait()
+        return holder["val"]
+
+    # ════════════════════════════════════════════════════════════════════
+    def _on_close(self):
+        self._alive = False
+        if self.active_control is not None:
+            self.active_control.cancel()
+        self.destroy()
+
+
+def main():
+    app = Sk7ldAIApp()
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    main()

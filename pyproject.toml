@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sk7ld-ai"
+version = "3.0.0"
+description = "Sk7ld-AI - a multi-theme, local-AI GUI/CLI hybrid that orchestrates a red-team arsenal via Ollama."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "SKALDSEC", email = "noreply@skaldsec.dev" }]
+keywords = ["security", "pentest", "red-team", "ollama", "customtkinter", "rtl-sdr", "wardriving"]
+dependencies = ["customtkinter>=5.2.0"]
+
+[project.urls]
+Homepage = "https://github.com/skuldexter-web/Sk7ld-AI"
+
+[project.scripts]
+sk7ld-ai = "sk7ldai.__main__:main"
+
+[tool.setuptools]
+packages = ["sk7ldai", "sk7ldai.gui", "sk7ldai.data"]
+py-modules = ["sk7ld_ai"]
+
+[tool.setuptools.package-data]
+"sk7ldai.data" = ["*.json"]
