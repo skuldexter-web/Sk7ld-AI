@@ -38,6 +38,8 @@ from ..ollama_client import DEFAULT_SYSTEM_PROMPT, CODE_SYSTEM_PROMPT, extract_c
 from .. import config
 from .. import voice as voicemod
 from .. import imagegen as imgmod
+from .. import vision as visionmod
+from .. import devices as devmod
 from .. import anon as anonmod
 from .. import netinfo
 from .. import updater
@@ -92,9 +94,13 @@ class Sk7ldAIApp(ctk.CTk):
         self._themed = []
         self.mono = self._pick_mono()
 
-        # voice + image engines (lazy backends; safe when not installed)
+        # voice + image + vision engines (lazy backends; safe when not installed)
         self.voice = voicemod.VoiceEngine(on_status=self._voice_status)
         self.imggen = imgmod.ImageGen(on_status=lambda m: self.after(0, self._append_line, m))
+        self.vision = visionmod.VisionEngine(
+            on_labels=self._on_vision_labels,
+            on_status=lambda m: self.after(0, self._append_line, m))
+        self.vision_on = False
         self._public_ip = None
         self._blink = True
 
@@ -306,10 +312,53 @@ class Sk7ldAIApp(ctk.CTk):
         self.tts_dropdown.pack(padx=14, pady=(0, 2), fill="x")
         self._reg(self.tts_dropdown, fg_color="glass2", button_color="accent",
                   button_hover_color="hover", text_color="entry_text")
+        # microphone + speaker pickers (detected local audio devices)
+        self.mic_dropdown = ctk.CTkOptionMenu(
+            P, values=self._audio_labels("inputs"), command=self._on_mic,
+            font=self.font(10, mono=True), corner_radius=10)
+        self.mic_dropdown.pack(padx=14, pady=(2, 2), fill="x")
+        self._reg(self.mic_dropdown, fg_color="glass2", button_color="accent",
+                  button_hover_color="hover", text_color="entry_text")
+        self.spk_dropdown = ctk.CTkOptionMenu(
+            P, values=self._audio_labels("outputs"), command=self._on_speaker,
+            font=self.font(10, mono=True), corner_radius=10)
+        self.spk_dropdown.pack(padx=14, pady=(0, 2), fill="x")
+        self._reg(self.spk_dropdown, fg_color="glass2", button_color="accent",
+                  button_hover_color="hover", text_color="entry_text")
         self.voice_hint = ctk.CTkLabel(P, text="", anchor="w", font=self.font(9, mono=True))
         self.voice_hint.pack(padx=14, pady=(0, 8), anchor="w", fill="x")
         self._reg(self.voice_hint, text_color="dim")
         self._refresh_voice_hint()
+
+        # VISION (object detection)
+        self._slabel(P, "OBJECT DETECTION")
+        drow = ctk.CTkFrame(P, fg_color="transparent"); drow.pack(padx=14, pady=(0, 2), fill="x")
+        self.vision_switch = ctk.CTkSwitch(drow, text="DETECT MODE",
+                                           font=self.font(12, "bold", mono=True),
+                                           command=self._toggle_vision)
+        self.vision_switch.pack(side="left")
+        self._reg(self.vision_switch, text_color="title", progress_color="accent",
+                  button_color="entry_text", fg_color="glass2")
+        self.vmodel_dropdown = ctk.CTkOptionMenu(
+            P, values=visionmod.model_labels(), command=self._on_vision_model,
+            font=self.font(11, mono=True), corner_radius=10)
+        self.vmodel_dropdown.pack(padx=14, pady=(4, 2), fill="x")
+        self._reg(self.vmodel_dropdown, fg_color="glass2", button_color="accent",
+                  button_hover_color="hover", text_color="entry_text")
+        self.cam_dropdown = ctk.CTkOptionMenu(
+            P, values=["camera 0 (default)", "camera 1", "camera 2", "camera 3"],
+            command=self._on_camera, font=self.font(10, mono=True), corner_radius=10)
+        self.cam_dropdown.pack(padx=14, pady=(0, 2), fill="x")
+        self._reg(self.cam_dropdown, fg_color="glass2", button_color="accent",
+                  button_hover_color="hover", text_color="entry_text")
+        self.vision_hint = ctk.CTkLabel(P, text="", anchor="w", font=self.font(9, mono=True))
+        self.vision_hint.pack(padx=14, pady=(0, 8), anchor="w", fill="x")
+        self._reg(self.vision_hint, text_color="dim")
+        self._refresh_vision_hint()
+
+        # DEVICES (hardware discovery)
+        self._slabel(P, "DEVICES")
+        self.scan_btn = self._sbtn(P, "SCAN HARDWARE", self._scan_devices, pad=(0, 8))
 
         # IMAGE
         self._slabel(P, "IMAGE (txt2img)")
@@ -347,6 +396,7 @@ class Sk7ldAIApp(ctk.CTk):
         self.hint_label = ctk.CTkLabel(
             P, justify="left", anchor="w", font=self.font(10, mono=True),
             text="> try:\n  scan 10.0.0.5\n  subdomains of site.com\n"
+                 "  what do you see?\n  make a wolf image\n"
                  "  system update\n  update yourself")
         self.hint_label.pack(padx=14, pady=(6, 10), anchor="w")
         self._reg(self.hint_label, text_color="dim")
@@ -752,6 +802,18 @@ class Sk7ldAIApp(ctk.CTk):
             self._run_system_update()
             return
 
+        # vision query -> answer from the live object detector
+        if _re.search(r"\bwhat\b.*\b(do you |can you |you )?see\b|"
+                      r"\bwhat'?s? (on |in )?(the )?(camera|webcam|screen|view)\b|"
+                      r"\bdescribe\b.*\b(see|camera|view)\b", low):
+            desc = self.vision.describe()
+            self.append_chat("SK7LD-AI", desc)
+            if self.voice_mode and voicemod.tts_available():
+                self.voice.speak(desc,
+                                 on_start=lambda: self.after(0, self._show_orb, "talking"),
+                                 on_done=lambda: self.after(0, self._hide_orb))
+            return
+
         # image-generation intent -> real image model, NOT the chat LLM
         # (otherwise the LLM "draws" ASCII art). e.g. "make a cyberviking image".
         if _re.search(r"\b(make|generate|create|draw|render|paint|gen(?:erate)?)\b"
@@ -973,6 +1035,106 @@ class Sk7ldAIApp(ctk.CTk):
     def _refresh_img_hint(self):
         self.img_hint.configure(text="ready" if imgmod.available()
                                 else "install: " + imgmod.missing_hint())
+
+    # ── audio device pickers ────────────────────────────────────────────
+    def _audio_labels(self, kind: str):
+        try:
+            devs = devmod.list_audio().get(kind, [])
+            labels = [f"[{d['index']}] {d['name']}"[:40] for d in devs]
+            return labels or ["(none found)"]
+        except Exception:
+            return ["(none found)"]
+
+    def _on_mic(self, label):
+        self._set_audio_device(label, is_input=True)
+
+    def _on_speaker(self, label):
+        self._set_audio_device(label, is_input=False)
+
+    def _set_audio_device(self, label, is_input: bool):
+        m = _re.match(r"\[(\d+)\]", label or "")
+        if not m:
+            return
+        idx = int(m.group(1))
+        try:
+            import sounddevice as sd
+            cur = list(sd.default.device) if sd.default.device else [None, None]
+            if len(cur) < 2:
+                cur = [None, None]
+            cur[0 if is_input else 1] = idx
+            sd.default.device = tuple(cur)
+            self._append_line(f"[~] {'Mic' if is_input else 'Speaker'} -> {label}")
+        except Exception as exc:  # noqa: BLE001
+            self._append_line(f"[!] Could not set audio device: {exc}")
+
+    # ── object detection (vision) ───────────────────────────────────────
+    def _refresh_vision_hint(self):
+        self.vision_hint.configure(
+            text="ready — flip DETECT MODE" if visionmod.available()
+            else "install: " + visionmod.missing_hint())
+
+    def _on_vision_model(self, label):
+        self.vision.set_model(visionmod.label_to_id(label))
+        self._append_line(f"[~] Detection model -> {label}")
+
+    def _on_camera(self, label):
+        m = _re.search(r"(\d+)", label or "0")
+        self.vision.set_camera(int(m.group(1)) if m else 0)
+        self._append_line(f"[~] Camera -> {label}")
+
+    def _toggle_vision(self):
+        want = bool(self.vision_switch.get())
+        if want:
+            if not visionmod.available():
+                self.append_chat("SYSTEM", "Object detection needs the vision stack:\n  "
+                                 + visionmod.missing_hint())
+                self.vision_switch.deselect()
+                return
+            self.append_chat("SYSTEM", "Object-detection mode ON — opening the webcam. "
+                             "Ask me \"what do you see?\" any time.")
+            self.vision_on = self.vision.start()
+            if not self.vision_on:
+                self.vision_switch.deselect()
+        else:
+            self.vision.stop()
+            self.vision_on = False
+            self.append_chat("SYSTEM", "Object-detection mode OFF.")
+
+    def _on_vision_labels(self, counts: dict):
+        """Clean label feed from the detector -> live sidebar readout."""
+        if not self._alive:
+            return
+        if counts:
+            txt = "seeing: " + ", ".join(f"{v}×{k}" for k, v in
+                                         sorted(counts.items(), key=lambda kv: -kv[1]))
+        else:
+            txt = "seeing: (nothing)" if self.vision_on else "ready — flip DETECT MODE"
+        self.after(0, lambda: self.vision_hint.configure(text=txt[:48]))
+
+    # ── hardware discovery ──────────────────────────────────────────────
+    def _scan_devices(self):
+        self.append_chat("SYSTEM", "Scanning for USB radios, audio and cameras...")
+
+        def run():
+            try:
+                for line in devmod.scan_lines():
+                    self.after(0, self._append_line, line)
+                # refresh the audio + camera pickers with what we found
+                self.after(0, self._refresh_device_pickers)
+            except Exception as exc:  # noqa: BLE001
+                self.after(0, self._append_line, f"[X] Scan failed: {exc}")
+        threading.Thread(target=run, daemon=True).start()
+
+    def _refresh_device_pickers(self):
+        try:
+            self.mic_dropdown.configure(values=self._audio_labels("inputs"))
+            self.spk_dropdown.configure(values=self._audio_labels("outputs"))
+            cams = devmod.list_cameras()
+            if cams:
+                self.cam_dropdown.configure(
+                    values=[f"camera {c['index']}" for c in cams])
+        except Exception:
+            pass
 
     def _toggle_voice(self):
         self.voice_mode = bool(self.voice_switch.get())
@@ -1210,6 +1372,7 @@ class Sk7ldAIApp(ctk.CTk):
         self._alive = False
         try:
             self.voice.stop_wake()
+            self.vision.stop()
             self.orb.stop()
         except Exception:
             pass

@@ -51,11 +51,13 @@ install_system_deps() {
   # core app + tor (anon) + audio drivers for the voice stack:
   #   portaudio19-dev -> sounddevice (mic),  libsndfile1 -> soundfile,
   #   espeak-ng       -> pyttsx3 spoken replies,  ffmpeg -> whisper decoding
+  # core app + tor + audio drivers + usbutils (device scan) + OpenCV runtime libs
   DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq \
     python3 python3-pip python3-tk python3-venv git curl \
     build-essential tor torsocks \
-    portaudio19-dev libportaudio2 libsndfile1 espeak-ng ffmpeg 2>/dev/null
-  ok "Core + audio system packages ready (tor, portaudio, espeak-ng, ffmpeg)"
+    portaudio19-dev libportaudio2 libsndfile1 espeak-ng ffmpeg \
+    usbutils libgl1 libglib2.0-0 2>/dev/null
+  ok "System packages ready (tor, portaudio, espeak-ng, ffmpeg, usbutils, OpenCV libs)"
 }
 
 # pip wrapper that works on PEP-668 "externally managed" systems (Kali/Debian)
@@ -98,6 +100,26 @@ install_python_deps() {
     fi
   else
     info "Skipped. Install later with: pip3 install -r requirements-image.txt"
+  fi
+
+  step "Vision stack (object detection, optional, large)"
+  warn "The webcam object-detection stack pulls in ultralytics + torch (large)."
+  local _vans="n"
+  if [[ -t 0 ]]; then
+    read -r -p "  Install it now? [y/N] " _vans
+  else
+    warn "Non-interactive shell - skipping vision stack."
+  fi
+  if [[ "${_vans,,}" == "y" || "${_vans,,}" == "yes" ]]; then
+    info "Installing vision stack (ultralytics, opencv)..."
+    if _pip -r "$APP_DIR/requirements-vision.txt"; then
+      ok "Vision stack installed (ultralytics, opencv-python)"
+    else
+      warn "Vision stack failed - install later with:"
+      warn "  pip3 install --break-system-packages -r requirements-vision.txt"
+    fi
+  else
+    info "Skipped. Install later with: pip3 install -r requirements-vision.txt"
   fi
 }
 

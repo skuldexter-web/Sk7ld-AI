@@ -21,6 +21,7 @@ Install the audio stack with:
 from __future__ import annotations
 
 import os
+import sys
 import shutil
 import threading
 from pathlib import Path
@@ -76,7 +77,10 @@ def stt_available() -> bool:
 
 
 def tts_available() -> bool:
-    return _can_import("piper") or bool(shutil.which("piper")) or _can_import("pyttsx3")
+    # Linux speaks via espeak-ng/espeak; Windows/mac via pyttsx3; Piper anywhere.
+    return (_can_import("piper") or bool(shutil.which("piper"))
+            or bool(shutil.which("espeak-ng")) or bool(shutil.which("espeak"))
+            or _can_import("pyttsx3"))
 
 
 def missing_hint() -> str:
@@ -84,26 +88,58 @@ def missing_hint() -> str:
 
 
 def list_tts_voices() -> List[str]:
-    """Piper .onnx voices if any are present, else system voices, else a default."""
-    voices = []
+    """
+    English voices ONLY (replies are English, so other languages just clutter the
+    dropdown). Order: a sensible default first, then any English Piper voices and
+    English espeak-ng variants / English system voices.
+    """
+    out: List[str] = ["English (default)"]
+
+    # Piper English voices, if any .onnx are installed
     try:
         if VOICE_DIR.is_dir():
-            voices = sorted(p.stem for p in VOICE_DIR.glob("*.onnx"))
+            out += [p.stem for p in sorted(VOICE_DIR.glob("*.onnx"))
+                    if "en" in p.stem.lower()]
     except Exception:
-        voices = []
-    if voices:
-        return voices
-    if _can_import("pyttsx3"):
+        pass
+
+    # Linux: espeak-ng English variants only (NOT the full 100-language list)
+    exe = shutil.which("espeak-ng") or shutil.which("espeak")
+    if exe:
+        try:
+            import subprocess
+            res = subprocess.run([exe, "--voices=en"], capture_output=True,
+                                 text=True, timeout=5)
+            for line in res.stdout.splitlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].lower().startswith("en"):
+                    out.append(parts[1])
+        except Exception:
+            pass
+
+    # Windows/mac: pyttsx3 English-named system voices only
+    if _can_import("pyttsx3") and os.name == "nt":
         try:
             import pyttsx3
             eng = pyttsx3.init()
-            vs = [v.name for v in eng.getProperty("voices")][:12]
+            for v in eng.getProperty("voices"):
+                name = getattr(v, "name", "") or ""
+                langs = ""
+                for lg in (getattr(v, "languages", None) or []):
+                    langs += (lg.decode("latin-1") if isinstance(lg, bytes)
+                              else str(lg)).lower()
+                if "english" in name.lower() or "en" in langs or "en-" in \
+                        (getattr(v, "id", "") or "").lower():
+                    out.append(name)
             eng.stop()
-            if vs:
-                return vs
         except Exception:
             pass
-    return ["(system default)"]
+
+    seen: List[str] = []
+    for v in out:
+        if v and v not in seen:
+            seen.append(v)
+    return seen[:14]
 
 
 class VoiceEngine:
@@ -299,7 +335,23 @@ class VoiceEngine:
                 return
             except Exception:
                 pass
-        # Fallback: pyttsx3 (system voices, no download)
+
+        # Linux: speak with espeak-ng/espeak directly. pyttsx3's Linux (espeak)
+        # driver frequently stays silent, so we bypass it on Linux.
+        if os.name == "posix" and sys.platform != "darwin":
+            if self._speak_espeak(text):
+                return
+
+        # macOS: the built-in `say` command
+        if sys.platform == "darwin":
+            try:
+                import subprocess
+                subprocess.run(["say", text], check=True, timeout=120)
+                return
+            except Exception:
+                pass
+
+        # Fallback: pyttsx3 (Windows SAPI5; mac if `say` failed)
         com_ready = False
         try:
             # On Windows, pyttsx3 uses SAPI5 (COM). This runs in a worker thread,
@@ -329,6 +381,30 @@ class VoiceEngine:
                     pythoncom.CoUninitialize()
                 except Exception:
                     pass
+
+    def _espeak_voice(self) -> str:
+        """Map the chosen voice to an espeak English variant (default en-us)."""
+        v = (self.tts_voice or "").strip()
+        if v and v.lower().startswith("en"):
+            return v
+        return "en-us"
+
+    def _speak_espeak(self, text: str) -> bool:
+        """Speak via espeak-ng/espeak (Linux). Returns True if audio was produced."""
+        exe = shutil.which("espeak-ng") or shutil.which("espeak")
+        if not exe:
+            self.on_status("[!] No Linux speech engine. Install: "
+                           "sudo apt install espeak-ng")
+            return False
+        try:
+            import subprocess
+            subprocess.run([exe, "-v", self._espeak_voice(), "-s", "165", text],
+                           check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=120)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.on_status(f"[!] espeak failed: {exc}")
+            return False
 
     def _select_voice(self, eng) -> None:
         """Pick the chosen voice, or auto-pick an English one for English output."""

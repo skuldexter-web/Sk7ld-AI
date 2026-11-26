@@ -18,7 +18,7 @@ Brand : SK7LD        GitHub : skuldexter-web        IG : @s.k.7.l.d
 License: MIT
 """
 
-__version__ = "3.2.0"
+__version__ = "3.3.0"
 __app_name__ = "Sk7ld-AI"
 __brand__ = "SK7LD"
 

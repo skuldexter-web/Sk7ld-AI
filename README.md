@@ -36,7 +36,10 @@ The chat window doesn't just *talk* about security tools — it **detects your i
   - **`v1ru5`** → the **V1RU5 virus** 🦠 — the official spiky capsid with glowing-green angry eyes and a fanged, dripping grin; spikes jab and the maw opens as it talks.
   - **`Cvlt of Baph0mau5`** → an **occult sigil** — ritual rings, a hexagram, an inverted pentagram and a horned XX-eyed goat glyph (flame flickers while speaking).
   - **`black and white` / `white and black`** → the **plexus globe** (rotating wireframe sphere).
-- **🖼️ Text-to-image** — generate images from a prompt. Default is a **small** model (`tiny-sd`); switch to bigger ones (`sd-turbo`, `SD 1.5`, `SDXL`) from the dropdown, downloaded on first use. *(Optional image stack — GPU recommended.)*
+- **🖼️ Text-to-image** — generate images from a prompt. Default is a **small** model (`tiny-sd`); switch to bigger ones (`sd-turbo`, `SD 1.5`, `SDXL`) from the dropdown, downloaded on first use. Just ask in chat (*"make a wolf image"*) or use **GENERATE IMAGE**; the finished PNG opens in your viewer. *(Optional image stack — GPU recommended.)*
+- **🎥 Object-detection mode** — flip **DETECT MODE** and SK7LD-AI opens your webcam and runs a fast local **YOLOv8n** model (via `ultralytics`), drawing live bounding boxes + labels. The detected labels feed straight into the assistant — ask *"what do you see?"* and it tells you (and speaks it in Voice mode). Pick the model (`n`/`s`/`m`) and camera from the sidebar. *(Optional vision stack — runs on CPU, GPU faster.)*
+- **🔌 Hardware scan** — **SCAN HARDWARE** enumerates your USB **RTL-SDR**, **GPS/GNSS**, **Wi-Fi** and **Bluetooth** dongles (by VID:PID + name), plus microphones, speakers and webcams — so you can see what's plugged in for war-driving, RF and voice/vision work.
+- **🎤 Mic / 🔈 speaker / 🎥 camera pickers** — choose which detected microphone and speaker Voice Mode uses, and which camera Object-Detection Mode opens.
 - **🧅 Anonymous mode (Tor)** — one switch routes SK7LD-AI's outbound traffic (public-IP check, weather, self-update) through the Tor SOCKS tunnel. Ollama stays local.
 - **🌐 Public-IP indicator** — top-right, above the weather: your public IP with a **red blinking dot** and *"PUBLIC IP VISIBLE"*. Turn on anonymous mode and it flips to the **Tor exit IP** with a **green blinking dot** and *"SAFE — ANONYMOUS"*.
 - **🧱 System update (Linux)** — say *"system update"* and it runs `apt update`, then asks **[Y/n]** to `apt upgrade -y`, then **[Y/n]** to `apt autoremove`.
@@ -90,18 +93,29 @@ pip install -r requirements.txt      # or: pip install .
 
 ### Optional extras
 
-These power the new heavy features and are **not** installed by default (they're large):
+The installer sets up the **voice stack** automatically and offers the image and
+vision stacks (they pull in torch and are large). To add them by hand:
 
 ```bash
-# Voice mode (microphone + spoken replies)
+# Voice mode (microphone + spoken replies) — auto-installed by the installer
 pip install -r requirements-voice.txt
+# Linux audio drivers for the above:
+sudo apt install -y portaudio19-dev libsndfile1 espeak-ng ffmpeg
 
 # Text-to-image generation (GPU strongly recommended; pick your torch build)
 pip install -r requirements-image.txt
 
+# Object detection (live webcam + YOLOv8n)
+pip install -r requirements-vision.txt
+# Linux runtime libs for OpenCV + the USB device scan:
+sudo apt install -y libgl1 libglib2.0-0 usbutils
+
 # Anonymous mode (Tor), Linux:
 sudo apt install -y tor torsocks
 ```
+
+> Voice replies are **English only**. On Linux, speech uses **eSpeak-NG** directly
+> (pyttsx3's Linux driver is unreliable); on Windows it uses SAPI5 via **pywin32**.
 
 If an extra isn't installed, its control simply shows an "install: …" hint — the rest of the app runs fine.
 
@@ -154,6 +168,8 @@ Sk7ld-AI/
 │   ├── updater.py               # self-update (git pull) + Linux system update
 │   ├── voice.py                 # STT/TTS engine + "Hey Scot" wake word (English-only)
 │   ├── imagegen.py              # text-to-image (diffusers, optional)
+│   ├── vision.py                # webcam object detection — YOLOv8n (optional)
+│   ├── devices.py               # hardware scan: USB SDR/GPS/wifi/BT, mics, cams
 │   ├── data/blackarch.json      # 1,700+ BlackArch tools, Kali-filtered + de-duped
 │   ├── ollama_client.py         # stdlib Ollama wrapper (list/pull/generate/chat)
 │   ├── installer.py             # apt→pip→go→git install engine (confirm-gated)
@@ -173,7 +189,7 @@ Sk7ld-AI/
 
 ## 🎨 Themes & Models
 
-- Switch themes live from the sidebar, exactly as in the original.
+- Switch themes live from the sidebar dropdown; `v1ru5-ai` reveals the second Instagram handle above the dropdowns, exactly as in the original.
 - **Model** dropdown lists your installed Ollama tags; **Ping Models** refreshes them; **Forge New Model** pulls instruct models (`3b` → `32b`). Streaming pull progress prints into the chat.
 
 ---

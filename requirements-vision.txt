@@ -1,0 +1,7 @@
+# Sk7ld-AI - OPTIONAL vision stack (Object-Detection Mode: live webcam + YOLOv8).
+# Pulls in torch (large); a GPU helps but YOLOv8n runs on CPU too.
+# Installed by install.sh / install.ps1 (opt-in), or by hand:
+#   pip install -r requirements-vision.txt
+ultralytics>=8.1.0
+opencv-python>=4.8.0
+numpy>=1.23.0

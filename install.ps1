@@ -57,6 +57,16 @@ if ($ans -match '^(y|yes)$') {
     Info "Skipped image stack. Install later: $py -m pip install -r requirements-image.txt"
 }
 
+# --- Vision stack (optional, large: webcam object detection) ---
+$vans = Read-Host "Install the webcam object-detection stack now? ultralytics + torch (large). [y/N]"
+if ($vans -match '^(y|yes)$') {
+    Info "Installing vision stack (ultralytics, opencv-python)..."
+    try { & $py -m pip install -r requirements-vision.txt; Ok "Vision stack ready" }
+    catch { Warn "Vision stack failed - install later: $py -m pip install -r requirements-vision.txt" }
+} else {
+    Info "Skipped vision stack. Install later: $py -m pip install -r requirements-vision.txt"
+}
+
 # --- Ollama ---
 if (Get-Command ollama -ErrorAction SilentlyContinue) {
     Ok "Ollama already installed"
