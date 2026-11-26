@@ -35,9 +35,16 @@ from ..control import JobControl
 from ..feeds import SystemStats, Weather, human_rate, human_bytes
 from ..ollama_client import DEFAULT_SYSTEM_PROMPT, CODE_SYSTEM_PROMPT, extract_code
 from .. import config
+from .. import voice as voicemod
+from .. import imagegen as imgmod
+from .. import anon as anonmod
+from .. import netinfo
+from .. import updater
+from ..osenv import is_windows
 from .dialogs import (ConfirmDialog, ToolChoiceDialog, InstallModelDialog,
-                      PersonaDialog, INSTALL_OPTIONS)
-from .visuals import Honeycomb, make_ambient
+                      PersonaDialog, DisclaimerDialog, INSTALL_OPTIONS)
+from .visuals import Honeycomb, make_ambient, VoiceOrb
+import re as _re
 
 try:
     from PIL import Image  # noqa: F401
@@ -75,12 +82,20 @@ class Sk7ldAIApp(ctk.CTk):
         self.client.system_prompt = config.get_system_prompt()   # load saved persona
         self.is_busy = False
         self.code_mode = False
+        self.voice_mode = False
+        self.anon_on = False
         self._last_code = None            # (code_text, extension)
         self.locked_target: Optional[str] = None
         self.active_control: Optional[JobControl] = None
         self._alive = True
         self._themed = []
         self.mono = self._pick_mono()
+
+        # voice + image engines (lazy backends; safe when not installed)
+        self.voice = voicemod.VoiceEngine(on_status=self._voice_status)
+        self.imggen = imgmod.ImageGen(on_status=lambda m: self.after(0, self._append_line, m))
+        self._public_ip = None
+        self._blink = True
 
         self.stats = SystemStats()
         self.weather = Weather()
@@ -108,15 +123,19 @@ class Sk7ldAIApp(ctk.CTk):
         self._build_sidebar()
         self._build_center()
         self._build_hud()
+        self._build_orb()
 
         self._apply_theme()
         self._render_ambient(force=True)
         self.fetch_models()
+        self.after(300, self._check_disclaimer)
         self.after(800, self.check_first_run)
         self._greet()
 
         self.after(200, self._tick_system)
         threading.Thread(target=self._weather_loop, daemon=True).start()
+        self.after(400, self._blink_dot)
+        self.after(600, self._refresh_ip)
         self.bind("<Configure>", self._on_configure)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -203,98 +222,148 @@ class Sk7ldAIApp(ctk.CTk):
         th = get_theme(self.current_theme_name)
         self.sidebar = self._card(self, row=0, column=0, sticky="nsew",
                                   padx=(14, 7), pady=14)
-        self.sidebar.configure(width=288)
+        self.sidebar.configure(width=292)
         self.sidebar.grid_propagate(False)
+        # scrollable inner frame so the growing control set always fits
+        self.side = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
+        self.side.pack(fill="both", expand=True, padx=2, pady=2)
+        P = self.side
 
-        self.title_label = ctk.CTkLabel(self.sidebar, text="",
-                                        font=self.font(19, "bold", mono=True))
-        self.title_label.pack(padx=18, pady=(18, 2))
+        self.title_label = ctk.CTkLabel(P, text="", font=self.font(19, "bold", mono=True))
+        self.title_label.pack(padx=14, pady=(12, 2))
         self._reg(self.title_label, text_color="title")
-
-        self.subtitle_label = ctk.CTkLabel(self.sidebar, text=th["subtitle"],
+        self.subtitle_label = ctk.CTkLabel(P, text=th["subtitle"],
                                            font=self.font(11, slant="italic"))
-        self.subtitle_label.pack(padx=18, pady=(0, 12))
+        self.subtitle_label.pack(padx=14, pady=(0, 10))
         self._reg(self.subtitle_label, text_color="sub_col")
 
-        self.github_label = ctk.CTkLabel(self.sidebar, text=SOCIAL_LINKS["github"],
+        self.github_label = ctk.CTkLabel(P, text=SOCIAL_LINKS["github"],
                                          font=self.font(10, mono=True), anchor="w")
-        self.github_label.pack(padx=18, pady=(2, 0), anchor="w")
+        self.github_label.pack(padx=14, pady=(2, 0), anchor="w")
         self._reg(self.github_label, text_color="title")
-
-        self.insta_label = ctk.CTkLabel(self.sidebar, text=SOCIAL_LINKS["instagram"],
+        self.insta_label = ctk.CTkLabel(P, text=SOCIAL_LINKS["instagram"],
                                         font=self.font(10, mono=True), anchor="w")
-        self.insta_label.pack(padx=18, pady=(0, 2), anchor="w")
+        self.insta_label.pack(padx=14, pady=(0, 2), anchor="w")
         self._reg(self.insta_label, text_color="sub_col")
-
-        self.insta2_label = ctk.CTkLabel(self.sidebar, text=SOCIAL_LINKS["instagram_v1ru5"],
+        self.insta2_label = ctk.CTkLabel(P, text=SOCIAL_LINKS["instagram_v1ru5"],
                                          font=self.font(10, mono=True), anchor="w")
         self._reg(self.insta2_label, text_color="sub_col")
         if th["show_v1ru5_ig"]:
-            self.insta2_label.pack(padx=18, pady=(0, 10), anchor="w")
+            self.insta2_label.pack(padx=14, pady=(0, 8), anchor="w")
 
-        self.theme_label = ctk.CTkLabel(self.sidebar, text="THEME",
-                                        font=self.font(11, "bold", mono=True), anchor="w")
-        self.theme_label.pack(padx=18, pady=(14, 2), anchor="w")
-        self._reg(self.theme_label, text_color="title")
+        # THEME
+        self.theme_label = self._slabel(P, "THEME")
         self.theme_dropdown = ctk.CTkOptionMenu(
-            self.sidebar, values=list(THEMES.keys()), command=self.change_theme,
+            P, values=list(THEMES.keys()), command=self.change_theme,
             font=self.font(12, mono=True), corner_radius=10)
         self.theme_dropdown.set(self.current_theme_name)
-        self.theme_dropdown.pack(padx=18, pady=(0, 10), fill="x")
+        self.theme_dropdown.pack(padx=14, pady=(0, 8), fill="x")
         self._reg(self.theme_dropdown, fg_color="glass2", button_color="accent",
                   button_hover_color="hover", text_color="entry_text")
 
-        self.model_label = ctk.CTkLabel(self.sidebar, text="MODEL",
-                                        font=self.font(11, "bold", mono=True), anchor="w")
-        self.model_label.pack(padx=18, pady=(4, 2), anchor="w")
-        self._reg(self.model_label, text_color="title")
+        # MODEL (chat / LLM)
+        self.model_label = self._slabel(P, "CHAT MODEL")
         self.model_dropdown = ctk.CTkOptionMenu(
-            self.sidebar, values=[DEFAULT_MODEL], command=self._on_model_change,
+            P, values=[DEFAULT_MODEL], command=self._on_model_change,
             font=self.font(12, mono=True), corner_radius=10)
-        self.model_dropdown.pack(padx=18, pady=(0, 12), fill="x")
+        self.model_dropdown.pack(padx=14, pady=(0, 6), fill="x")
         self._reg(self.model_dropdown, fg_color="glass2", button_color="accent",
                   button_hover_color="hover", text_color="entry_text")
+        self.refresh_btn = self._sbtn(P, "PING MODELS", self.fetch_models)
+        self.install_btn = self._sbtn(P, "FORGE NEW MODEL", self.open_install_dialog)
+        self.persona_btn = self._sbtn(P, "EDIT PERSONA", self.open_persona_dialog, pad=(0, 8))
 
-        self.refresh_btn = ctk.CTkButton(self.sidebar, text="PING MODELS",
-                                         command=self.fetch_models, corner_radius=10,
-                                         font=self.font(12, "bold", mono=True))
-        self.refresh_btn.pack(padx=18, pady=6, fill="x")
-        self._reg(self.refresh_btn, fg_color="glass2", hover_color="hover", text_color="title")
-
-        self.install_btn = ctk.CTkButton(self.sidebar, text="FORGE NEW MODEL",
-                                         command=self.open_install_dialog, corner_radius=10,
-                                         font=self.font(12, "bold", mono=True))
-        self.install_btn.pack(padx=18, pady=(0, 6), fill="x")
-        self._reg(self.install_btn, fg_color="glass2", hover_color="hover", text_color="title")
-
-        self.persona_btn = ctk.CTkButton(self.sidebar, text="EDIT PERSONA",
-                                         command=self.open_persona_dialog, corner_radius=10,
-                                         font=self.font(12, "bold", mono=True))
-        self.persona_btn.pack(padx=18, pady=(0, 10), fill="x")
-        self._reg(self.persona_btn, fg_color="glass2", hover_color="hover", text_color="title")
-
-        # Code Mode: route prompts straight to code generation.
-        crow = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        crow.pack(padx=18, pady=(2, 2), fill="x")
+        # CODE
+        crow = ctk.CTkFrame(P, fg_color="transparent"); crow.pack(padx=14, pady=(2, 2), fill="x")
         self.code_switch = ctk.CTkSwitch(crow, text="CODE MODE",
                                          font=self.font(12, "bold", mono=True),
                                          command=self._toggle_code_mode)
         self.code_switch.pack(side="left")
         self._reg(self.code_switch, text_color="title", progress_color="accent",
                   button_color="entry_text", fg_color="glass2")
-        self.save_code_btn = ctk.CTkButton(self.sidebar, text="SAVE CODE",
-                                           command=self._save_code, corner_radius=10,
-                                           state="disabled",
-                                           font=self.font(12, "bold", mono=True))
-        self.save_code_btn.pack(padx=18, pady=(2, 10), fill="x")
-        self._reg(self.save_code_btn, fg_color="glass2", hover_color="hover", text_color="title")
+        self.save_code_btn = self._sbtn(P, "SAVE CODE", self._save_code, state="disabled", pad=(2, 8))
+
+        # VOICE
+        self._slabel(P, "VOICE")
+        vrow = ctk.CTkFrame(P, fg_color="transparent"); vrow.pack(padx=14, pady=(0, 2), fill="x")
+        self.voice_switch = ctk.CTkSwitch(vrow, text="VOICE MODE",
+                                          font=self.font(12, "bold", mono=True),
+                                          command=self._toggle_voice)
+        self.voice_switch.pack(side="left")
+        self._reg(self.voice_switch, text_color="title", progress_color="accent",
+                  button_color="entry_text", fg_color="glass2")
+        self.stt_dropdown = ctk.CTkOptionMenu(
+            P, values=voicemod.STT_MODELS, command=self._on_stt_model,
+            font=self.font(11, mono=True), corner_radius=10)
+        self.stt_dropdown.set(voicemod.DEFAULT_STT)
+        self.stt_dropdown.pack(padx=14, pady=(4, 4), fill="x")
+        self._reg(self.stt_dropdown, fg_color="glass2", button_color="accent",
+                  button_hover_color="hover", text_color="entry_text")
+        self.tts_dropdown = ctk.CTkOptionMenu(
+            P, values=voicemod.list_tts_voices(), command=self._on_tts_voice,
+            font=self.font(11, mono=True), corner_radius=10)
+        self.tts_dropdown.pack(padx=14, pady=(0, 2), fill="x")
+        self._reg(self.tts_dropdown, fg_color="glass2", button_color="accent",
+                  button_hover_color="hover", text_color="entry_text")
+        self.voice_hint = ctk.CTkLabel(P, text="", anchor="w", font=self.font(9, mono=True))
+        self.voice_hint.pack(padx=14, pady=(0, 8), anchor="w", fill="x")
+        self._reg(self.voice_hint, text_color="dim")
+        self._refresh_voice_hint()
+
+        # IMAGE
+        self._slabel(P, "IMAGE (txt2img)")
+        self.img_dropdown = ctk.CTkOptionMenu(
+            P, values=imgmod.model_labels(), command=self._on_image_model,
+            font=self.font(11, mono=True), corner_radius=10)
+        self.img_dropdown.pack(padx=14, pady=(0, 4), fill="x")
+        self._reg(self.img_dropdown, fg_color="glass2", button_color="accent",
+                  button_hover_color="hover", text_color="entry_text")
+        self.img_btn = self._sbtn(P, "GENERATE IMAGE", self._gen_image, pad=(0, 2))
+        self.img_hint = ctk.CTkLabel(P, text="", anchor="w", font=self.font(9, mono=True))
+        self.img_hint.pack(padx=14, pady=(0, 8), anchor="w", fill="x")
+        self._reg(self.img_hint, text_color="dim")
+        self._refresh_img_hint()
+
+        # ANONYMOUS
+        self._slabel(P, "ANONYMOUS")
+        arow = ctk.CTkFrame(P, fg_color="transparent"); arow.pack(padx=14, pady=(0, 2), fill="x")
+        self.anon_switch = ctk.CTkSwitch(arow, text="ANON (Tor)",
+                                         font=self.font(12, "bold", mono=True),
+                                         command=self._toggle_anon)
+        self.anon_switch.pack(side="left")
+        self._reg(self.anon_switch, text_color="title", progress_color="good",
+                  button_color="entry_text", fg_color="glass2")
+        self.anon_hint = ctk.CTkLabel(P, text="", anchor="w", font=self.font(9, mono=True))
+        self.anon_hint.pack(padx=14, pady=(0, 8), anchor="w", fill="x")
+        self._reg(self.anon_hint, text_color="dim")
+        if is_windows():
+            self.anon_hint.configure(text="needs Tor on 127.0.0.1:9050")
+        elif anonmod.tor_available():
+            self.anon_hint.configure(text="Tor ready")
+        else:
+            self.anon_hint.configure(text="install: sudo apt install tor")
 
         self.hint_label = ctk.CTkLabel(
-            self.sidebar, justify="left", anchor="w", font=self.font(10, mono=True),
-            text="> type an action:\n  scan 10.0.0.5\n  subdomains of site.com\n"
-                 "  check site.com for vulns\n> or just chat.")
-        self.hint_label.pack(padx=18, pady=(14, 0), anchor="w")
+            P, justify="left", anchor="w", font=self.font(10, mono=True),
+            text="> try:\n  scan 10.0.0.5\n  subdomains of site.com\n"
+                 "  system update\n  update yourself")
+        self.hint_label.pack(padx=14, pady=(6, 10), anchor="w")
         self._reg(self.hint_label, text_color="dim")
+
+    # small sidebar helpers
+    def _slabel(self, parent, text):
+        lbl = ctk.CTkLabel(parent, text=text, anchor="w",
+                           font=self.font(11, "bold", mono=True))
+        lbl.pack(padx=14, pady=(10, 2), anchor="w")
+        self._reg(lbl, text_color="title")
+        return lbl
+
+    def _sbtn(self, parent, text, cmd, state="normal", pad=(0, 6)):
+        b = ctk.CTkButton(parent, text=text, command=cmd, corner_radius=10, state=state,
+                          font=self.font(12, "bold", mono=True))
+        b.pack(padx=14, pady=pad, fill="x")
+        self._reg(b, fg_color="glass2", hover_color="hover", text_color="title")
+        return b
 
     # ════════════════════════════════════════════════════════════════════
     #  CENTER (console card + input row)
@@ -306,6 +375,7 @@ class Sk7ldAIApp(ctk.CTk):
         col.grid_columnconfigure(0, weight=1)
 
         card = self._card(col, row=0, column=0, sticky="nsew")
+        self.console_card = card
         card.grid_rowconfigure(1, weight=1)
         card.grid_columnconfigure(0, weight=1)
         self._section_header(card, "Console").grid(row=0, column=0, sticky="ew",
@@ -335,18 +405,24 @@ class Sk7ldAIApp(ctk.CTk):
         self._reg(self.input_entry, fg_color="glass", text_color="entry_text",
                   border_color="border")
 
+        self.mic_btn = ctk.CTkButton(
+            row, text="🎤", width=52, height=46, corner_radius=CARD_RADIUS,
+            font=self.font(16, "bold"), command=self._mic_click)
+        self.mic_btn.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self._reg(self.mic_btn, fg_color="glass2", text_color="title", hover_color="hover")
+
         self.send_btn = ctk.CTkButton(
-            row, text="EXECUTE", width=120, height=46, corner_radius=CARD_RADIUS,
+            row, text="EXECUTE", width=110, height=46, corner_radius=CARD_RADIUS,
             font=self.font(13, "bold", mono=True), command=self.send_message)
-        self.send_btn.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self.send_btn.grid(row=0, column=2, sticky="e", padx=(0, 8))
         self._reg(self.send_btn, fg_color="accent", text_color="accent_text", hover_color="hover")
 
         self.stop_btn = ctk.CTkButton(
-            row, text="■ STOP", width=96, height=46, corner_radius=CARD_RADIUS,
+            row, text="■ STOP", width=92, height=46, corner_radius=CARD_RADIUS,
             fg_color="#8b1a1a", text_color="#ffffff", hover_color="#b22222",
             font=self.font(13, "bold", mono=True), command=self.stop_current,
             state="disabled")
-        self.stop_btn.grid(row=0, column=2, sticky="e")
+        self.stop_btn.grid(row=0, column=3, sticky="e")
 
     # ════════════════════════════════════════════════════════════════════
     #  HUD (right): weather card + honeycomb card
@@ -355,6 +431,23 @@ class Sk7ldAIApp(ctk.CTk):
         col = ctk.CTkFrame(self, fg_color="transparent", width=316)
         col.grid(row=0, column=2, sticky="nsew", padx=(7, 14), pady=14)
         col.grid_propagate(False)
+
+        # ── Public IP indicator (top-right, above weather) ──
+        ipc = self._card(col)
+        ipc.pack(fill="x", pady=(0, 12))
+        iprow = ctk.CTkFrame(ipc, fg_color="transparent")
+        iprow.pack(fill="x", padx=14, pady=(10, 2))
+        self.ip_dot = ctk.CTkLabel(iprow, text="●", font=self.font(16, "bold"))
+        self.ip_dot.pack(side="left")
+        self.ip_dot.configure(text_color=get_theme(self.current_theme_name)["bad"])
+        self.ip_value = ctk.CTkLabel(iprow, text="public IP: …", anchor="w",
+                                     font=self.font(13, "bold", mono=True))
+        self.ip_value.pack(side="left", padx=(8, 0))
+        self._reg(self.ip_value, text_color="text")
+        self.ip_note = ctk.CTkLabel(ipc, text="PUBLIC IP VISIBLE", anchor="w",
+                                    font=self.font(9, "bold", mono=True))
+        self.ip_note.pack(fill="x", padx=14, pady=(0, 10))
+        self.ip_note.configure(text_color=get_theme(self.current_theme_name)["bad"])
 
         # ── Weather card ──
         wc = self._card(col)
@@ -502,9 +595,11 @@ class Sk7ldAIApp(ctk.CTk):
         self._refresh_title()
         self.subtitle_label.configure(text=th["subtitle"])
         if th["show_v1ru5_ig"]:
-            self.insta2_label.pack(padx=18, pady=(0, 10), anchor="w", before=self.theme_label)
+            self.insta2_label.pack(padx=14, pady=(0, 8), anchor="w", before=self.theme_label)
         else:
             self.insta2_label.pack_forget()
+        self._update_ip_label(self._public_ip)   # recolor dot/note for new theme
+        self.orb.set_theme(th)
         self._render_ambient(force=True)
 
     # ════════════════════════════════════════════════════════════════════
@@ -644,6 +739,18 @@ class Sk7ldAIApp(ctk.CTk):
         self.input_entry.delete(0, "end")
         self.append_chat("You", prompt)
 
+        low = prompt.lower()
+        # self-update intent
+        if _re.search(r"\b(update|upgrade)\s+(your ?self|sk7ld|the app|the tool)\b|"
+                      r"\bself[ -]?update\b|\bpull (the )?(latest|newest)( repo)?\b", low):
+            self._run_self_update()
+            return
+        # linux system update intent
+        if _re.search(r"\b(system update|update (the )?system|apt update|"
+                      r"update (kali|linux|debian|packages)|upgrade (the )?system)\b", low):
+            self._run_system_update()
+            return
+
         if self.code_mode:
             self._start_code(prompt)
             return
@@ -671,13 +778,20 @@ class Sk7ldAIApp(ctk.CTk):
         control = self._new_job()
         self._set_busy(True)
         self.append_chat("AI", "")
+        buf = []
 
         def run():
             try:
                 for token in self.client.chat_stream(prompt, control=control):
+                    buf.append(token)
                     self.after(0, self._insert, token)
                 if control.cancelled:
                     self.after(0, self._insert, "  [stopped]")
+                elif self.voice_mode and voicemod.tts_available():
+                    self.voice.speak(
+                        "".join(buf),
+                        on_start=lambda: self.after(0, self._show_orb, "talking"),
+                        on_done=lambda: self.after(0, self._hide_orb))
             finally:
                 self.after(0, self._insert, "\n\n")
                 self.after(0, lambda: self._set_busy(False))
@@ -785,8 +899,260 @@ class Sk7ldAIApp(ctk.CTk):
         return holder["val"]
 
     # ════════════════════════════════════════════════════════════════════
+    # ════════════════════════════════════════════════════════════════════
+    #  FIRST-LAUNCH DISCLAIMER
+    # ════════════════════════════════════════════════════════════════════
+    def _check_disclaimer(self):
+        if config.disclaimer_accepted():
+            return
+        agreed = DisclaimerDialog(self, get_theme(self.current_theme_name),
+                                  version=__version__).show()
+        if agreed:
+            config.accept_disclaimer()
+        else:
+            self._on_close()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  VOICE ORB (animated globe overlay)
+    # ════════════════════════════════════════════════════════════════════
+    def _build_orb(self):
+        th = get_theme(self.current_theme_name)
+        self.orb_panel = ctk.CTkFrame(self.console_card, corner_radius=16,
+                                      border_width=1, fg_color=th["glass2"],
+                                      border_color=th["accent"])
+        self._reg(self.orb_panel, fg_color="glass2", border_color="accent")
+        self.orb_label = ctk.CTkLabel(self.orb_panel, text="LISTENING",
+                                      font=self.font(13, "bold", mono=True))
+        self.orb_label.pack(padx=20, pady=(14, 4))
+        self._reg(self.orb_label, text_color="title")
+        self.orb = VoiceOrb(self.orb_panel, th, size=230)
+        self.orb.pack(padx=18, pady=(0, 18))
+
+    def _show_orb(self, mode: str):
+        if not self._alive:
+            return
+        label = "LISTENING" if mode == "listening" else "SPEAKING"
+        self.orb_label.configure(text=f"● {label}")
+        self.orb.start(mode)
+        self.orb_panel.place(relx=0.5, rely=0.5, anchor="center")
+        self.orb_panel.lift()
+
+    def _hide_orb(self):
+        try:
+            self.orb.stop()
+            self.orb_panel.place_forget()
+        except Exception:
+            pass
+
+    # ════════════════════════════════════════════════════════════════════
+    #  VOICE
+    # ════════════════════════════════════════════════════════════════════
+    def _voice_status(self, msg: str):
+        self.after(0, self._append_line, msg)
+
+    def _refresh_voice_hint(self):
+        if voicemod.stt_available() and voicemod.tts_available():
+            txt = "ready (STT+TTS)"
+        elif voicemod.stt_available():
+            txt = "listening ok; TTS missing"
+        elif voicemod.tts_available():
+            txt = "speaking ok; STT missing"
+        else:
+            txt = "install: " + voicemod.missing_hint()
+        self.voice_hint.configure(text=txt)
+
+    def _refresh_img_hint(self):
+        self.img_hint.configure(text="ready" if imgmod.available()
+                                else "install: " + imgmod.missing_hint())
+
+    def _toggle_voice(self):
+        self.voice_mode = bool(self.voice_switch.get())
+        if self.voice_mode:
+            if not (voicemod.stt_available() or voicemod.tts_available()):
+                self.append_chat("SYSTEM", "Voice mode needs the audio stack:\n  "
+                                 + voicemod.missing_hint())
+                return
+            self.append_chat("SYSTEM", 'Voice mode ON — say "Skuld" to wake me, or use '
+                             "the 🎤 button. Replies are spoken aloud.")
+            if voicemod.stt_available():
+                self.voice.start_wake(self._on_wake)
+        else:
+            self.voice.stop_wake()
+            self._hide_orb()
+            self.append_chat("SYSTEM", "Voice mode OFF.")
+
+    def _on_wake(self, command: str):
+        """Called from the wake-word thread when 'Skuld' is heard."""
+        self.after(0, self._wake_fire, command)
+
+    def _wake_fire(self, command: str):
+        if not self._alive or self.is_busy:
+            return
+        self._show_orb("listening")
+        self.after(1200, self._hide_orb)
+        cmd = voicemod.strip_wake(command).strip()
+        if cmd:
+            self.append_chat("SYSTEM", f'Skuld heard: "{cmd}"')
+            self._voice_submit(cmd)
+        else:
+            self._append_line("[*] Skuld: yes? — say \"Skuld <command>\".")
+
+    def _on_stt_model(self, name):
+        self.voice.set_stt_model(name)
+        self._append_line(f"[~] Listening model -> {name}")
+        threading.Thread(target=lambda: self.voice.pull_stt_model(name, self._voice_status),
+                         daemon=True).start()
+
+    def _on_tts_voice(self, name):
+        self.voice.tts_voice = name
+        self._append_line(f"[~] Speaking voice -> {name}")
+
+    def _mic_click(self):
+        if not self.voice.listening:
+            if self.voice.start_listening():
+                self.mic_btn.configure(text="●", fg_color="#8b1a1a")
+                self._show_orb("listening")
+        else:
+            self.mic_btn.configure(text="🎤", fg_color=get_theme(self.current_theme_name)["glass2"])
+            self._hide_orb()
+            self._set_busy(True)
+
+            def run():
+                text = self.voice.stop_and_transcribe()
+                self.after(0, lambda: self._set_busy(False))
+                if text:
+                    self.after(0, self._voice_submit, text)
+            threading.Thread(target=run, daemon=True).start()
+
+    def _voice_submit(self, text: str):
+        text = voicemod.strip_wake(text)   # drop a leading "Skuld," if present
+        self.input_entry.delete(0, "end")
+        self.input_entry.insert(0, text)
+        self.send_message()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  IMAGE
+    # ════════════════════════════════════════════════════════════════════
+    def _on_image_model(self, label):
+        self.imggen.set_model(imgmod.label_to_id(label))
+        self._append_line(f"[~] Image model -> {label}")
+
+    def _gen_image(self):
+        if self.is_busy:
+            return
+        prompt = self.input_entry.get().strip()
+        if not prompt:
+            self.append_chat("SYSTEM", "Type an image prompt first, then GENERATE IMAGE.")
+            return
+        if not imgmod.available():
+            self.append_chat("SYSTEM", "Image generation needs: " + imgmod.missing_hint())
+            return
+        self.input_entry.delete(0, "end")
+        self.append_chat("IMAGE", prompt)
+        self._set_busy(True)
+
+        def run():
+            try:
+                self.imggen.generate(prompt, log=lambda m: self.after(0, self._append_line, m))
+            finally:
+                self.after(0, lambda: self._set_busy(False))
+        threading.Thread(target=run, daemon=True).start()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  ANONYMOUS MODE (Tor)
+    # ════════════════════════════════════════════════════════════════════
+    def _toggle_anon(self):
+        want = bool(self.anon_switch.get())
+        if want:
+            self.append_chat("SYSTEM", "Enabling anonymous mode (Tor)...")
+
+            def run():
+                ok = anonmod.enable(log=lambda m: self.after(0, self._append_line, m))
+                self.anon_on = ok
+                if not ok:
+                    self.after(0, lambda: self.anon_switch.deselect())
+                self.after(0, self._refresh_ip)
+            threading.Thread(target=run, daemon=True).start()
+        else:
+            anonmod.disable(log=lambda m: self.after(0, self._append_line, m))
+            self.anon_on = False
+            self._refresh_ip()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  PUBLIC IP INDICATOR
+    # ════════════════════════════════════════════════════════════════════
+    def _blink_dot(self):
+        if not self._alive:
+            return
+        self._blink = not self._blink
+        th = get_theme(self.current_theme_name)
+        col = th["good"] if self.anon_on else th["bad"]
+        try:
+            self.ip_dot.configure(text_color=col if self._blink else th["glass"])
+        except Exception:
+            pass
+        self.after(600, self._blink_dot)
+
+    def _refresh_ip(self):
+        def run():
+            ip = netinfo.tor_ip() if self.anon_on else netinfo.public_ip()
+            if self._alive:
+                self.after(0, self._update_ip_label, ip)
+        threading.Thread(target=run, daemon=True).start()
+
+    def _update_ip_label(self, ip):
+        self._public_ip = ip
+        th = get_theme(self.current_theme_name)
+        shown = ip or "unknown"
+        if self.anon_on:
+            self.ip_value.configure(text=f"Tor exit: {shown}")
+            self.ip_note.configure(text="SAFE — ANONYMOUS (Tor)", text_color=th["good"])
+            self.ip_dot.configure(text_color=th["good"])
+        else:
+            self.ip_value.configure(text=f"public IP: {shown}")
+            self.ip_note.configure(text="PUBLIC IP VISIBLE", text_color=th["bad"])
+            self.ip_dot.configure(text_color=th["bad"])
+
+    # ════════════════════════════════════════════════════════════════════
+    #  UPDATES
+    # ════════════════════════════════════════════════════════════════════
+    def _run_self_update(self):
+        if self.is_busy:
+            return
+        control = self._new_job()
+        self._set_busy(True)
+        self.append_chat("SYSTEM", "Checking for a Sk7ld-AI update...")
+
+        def run():
+            try:
+                updater.self_update(log=lambda m: self.after(0, self._append_line, m),
+                                    confirm=self._confirm_on_main, control=control)
+            finally:
+                self.after(0, lambda: self._set_busy(False))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _run_system_update(self):
+        if self.is_busy:
+            return
+        control = self._new_job()
+        self._set_busy(True)
+        self.append_chat("SYSTEM", "System update...")
+
+        def run():
+            try:
+                updater.system_update(log=lambda m: self.after(0, self._append_line, m),
+                                      confirm=self._confirm_on_main, control=control)
+            finally:
+                self.after(0, lambda: self._set_busy(False))
+        threading.Thread(target=run, daemon=True).start()
+
     def _on_close(self):
         self._alive = False
+        try:
+            self.voice.stop_wake()
+            self.orb.stop()
+        except Exception:
+            pass
         if self.active_control is not None:
             self.active_control.cancel()
         self.destroy()

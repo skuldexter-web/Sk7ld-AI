@@ -9,7 +9,7 @@ description = "Sk7ld-AI - a multi-theme, local-AI GUI/CLI hybrid that orchestrat
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "SKALDSEC", email = "noreply@skaldsec.dev" }]
+authors = [{ name = "SK7LD" }]
 keywords = ["security", "pentest", "red-team", "ollama", "customtkinter", "rtl-sdr", "wardriving"]
 dependencies = ["customtkinter>=5.2.0"]
 

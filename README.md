@@ -3,30 +3,46 @@
 # ⚡ SK7LD-AI ⚡
 ### Digital Longship Intelligence System
 
-**A multi-theme, local-AI GUI/CLI hybrid that orchestrates a full red-team arsenal — powered by Ollama.**
+**A local-AI red-team agent for Kali Linux (and Windows) — multi-theme GUI/CLI, powered by Ollama.**
 
-`SKALDSEC` · GitHub: **skuldexter-web** · Instagram: **@s.k.7.l.d**
+`SK7LD` · GitHub: **skuldexter-web** · Instagram: **@s.k.7.l.d**
 
 </div>
 
 ---
 
-Sk7ld-AI fuses two tools into one:
+**SK7LD-AI is an AI agent for offensive security.** It's built for **red teamers, penetration testers, cybersecurity personnel and white-hat hackers** working on systems they're authorised to test. It runs primarily on **Kali Linux** (and, to a lesser extent, **Windows**), fully local through your own Ollama node.
 
-| Source project | What it brought |
-|---|---|
-| **Multi-Theme AI Terminal** (`skuld.py` / `ai_terminal.py`) | The 8-theme CustomTkinter chat front-end, Ollama model management, the "Forge New Model" installer. |
-| **Viking AI** (`viking` / `install.sh`) | The weapon arsenal (~100 security tools), the apt→pip→go→git install engine, and natural-language tool dispatch. |
+The chat window doesn't just *talk* about security tools — it **detects your intent, offers the right tools with descriptions, installs what's missing (only after you confirm), runs them, and feeds the output back to the local model for analysis.** You can also talk to it, have it generate code or images, route its traffic through Tor, and let it update itself and the system.
 
-The result is a single desktop app whose chat window doesn't just *talk* about security tools — it **detects your intent, offers the right tools with descriptions, installs what's missing (only after you confirm), runs them, and feeds the output back to the local model for analysis.** The same engine runs headless in `--cli` mode.
+> ⚠️ **Authorised use only.** SK7LD-AI is for legal, in-scope engagements and education. You are responsible for staying in scope and complying with the law.
 
 ---
 
 ## ✨ Features
 
-- **Cozy frosted-glass UI** — floating rounded glass cards over a blurred, theme-tinted bokeh backdrop, with real window transparency (subtle see-through to your desktop on any compositor).
-- **Hexagon system HUD** — the PC live feeds render as a honeycomb of hexagon ring-gauges (CPU · GPU · RAM · NET · DISK) around a live clock.
-- **3 themes**: **`sk7ld`** (cyan-blue + purple neon, default), **`v1ru5`** (the original green neural node, with its hidden `@v1ru5_0` sidebar link), and **`Cvlt of Baph0mau5`** (crimson + gold occult-cyber). Switch live from the sidebar.
+### Agent & interface
+- **Red-team AI agent** — understands the goal, suggests the next concrete step/command, and orchestrates the right arsenal tool when it helps.
+- **Cozy frosted-glass UI** — floating rounded glass cards over a blurred, theme-tinted bokeh backdrop, with real window transparency.
+- **Hexagon system HUD** — PC live feeds as a honeycomb of hexagon ring-gauges (CPU · GPU · RAM · NET · DISK) around a live clock, plus a live weather feed.
+- **5 themes**: **`sk7ld`** (cyan + purple, default), **`v1ru5`** (green neural node), **`Cvlt of Baph0mau5`** (crimson + gold), **`black and white`** (monochrome dark) and **`white and black`** (monochrome light). Switch live from the sidebar.
+
+### New in this build
+- **🛡️ Authorised-use disclaimer** — a one-time gate on first launch states the rules of engagement (own/authorised targets only). Accept once (**I AGREE — ENTER**) and it's remembered; **Decline & Exit** closes the app.
+- **🎤 Voice mode** — talk to SK7LD-AI and hear it reply. Listening uses **Whisper** (dropdown: `tiny`→`large-v3`, default **`base`** so it won't blow up your PC); speaking uses **Piper voices** or your OS voices. Pull heavier listening/speaking models from the dropdowns. *(Optional audio stack — see Install.)*
+- **🗣️ Wake word "Skuld"** — in Voice mode, SK7LD-AI listens for its name. Say *"Skuld, scan 10.0.0.5"* and it wakes, strips the name and runs the command. Wake listening is **only** active in Voice mode (never in CLI).
+- **🪐 Animated voice orb — one per theme** — an orb appears over the console while it works, with **two distinct motions**: **calm & slow** when **listening**, **faster, pulsing & morphing** when **speaking**. Each theme gets its *own* shape, auto-tinted to its colours:
+  - **`sk7ld`** → the **SK7LD viking** — the official horned-helmet warrior (ridged dome + flame crest, studded band, furrowed brow, braided beard) inside a spinning code-ring.
+  - **`v1ru5`** → the **V1RU5 virus** 🦠 — the official spiky capsid with glowing-green angry eyes and a fanged, dripping grin; spikes jab and the maw opens as it talks.
+  - **`Cvlt of Baph0mau5`** → an **occult sigil** — ritual rings, a hexagram, an inverted pentagram and a horned XX-eyed goat glyph (flame flickers while speaking).
+  - **`black and white` / `white and black`** → the **plexus globe** (rotating wireframe sphere).
+- **🖼️ Text-to-image** — generate images from a prompt. Default is a **small** model (`tiny-sd`); switch to bigger ones (`sd-turbo`, `SD 1.5`, `SDXL`) from the dropdown, downloaded on first use. *(Optional image stack — GPU recommended.)*
+- **🧅 Anonymous mode (Tor)** — one switch routes SK7LD-AI's outbound traffic (public-IP check, weather, self-update) through the Tor SOCKS tunnel. Ollama stays local.
+- **🌐 Public-IP indicator** — top-right, above the weather: your public IP with a **red blinking dot** and *"PUBLIC IP VISIBLE"*. Turn on anonymous mode and it flips to the **Tor exit IP** with a **green blinking dot** and *"SAFE — ANONYMOUS"*.
+- **🧱 System update (Linux)** — say *"system update"* and it runs `apt update`, then asks **[Y/n]** to `apt upgrade -y`, then **[Y/n]** to `apt autoremove`.
+- **♻️ Self-update** — say *"update yourself"* and it `git pull`s the newest repo into place (after your **[Y/n]**), then restart to load it. If you **unzipped** instead of cloning (no `.git`), it offers to **clone a fresh copy** next to the current folder so updates work from then on. Pulls from `github.com/skuldexter-web/sk7ld-ai`.
+
+### Core
 - **Editable persona** — change Sk7ld-AI's system prompt from the sidebar (**Edit Persona**) or the CLI (`persona set ...`); it's saved to `~/.config/sk7ld-ai/config.json` and used on every chat.
 - **Code Mode** — flip the sidebar switch (or `code` in the CLI) and every prompt becomes a code/script request; generated code streams in, then **Save Code** writes it out with the right extension.
 - **Runs on Windows too** — the same engine auto-detects the OS and, on Windows, exposes only Windows-capable tools and uses Windows install/launch paths. A ready-to-run Windows build ships as `Sk7ld-AI-Windows.zip`.
@@ -50,7 +66,7 @@ One repo runs on **both Linux and Windows** — the same engine auto-detects the
 **Linux / Kali / Debian**
 
 ```bash
-git clone https://github.com/skuldexter-web/Sk7ld-AI.git
+git clone https://github.com/skuldexter-web/sk7ld-ai.git
 cd Sk7ld-AI
 sudo bash install.sh
 ```
@@ -71,6 +87,23 @@ Manual route (either OS):
 pip install -r requirements.txt      # or: pip install .
 # make sure Ollama is running:  ollama serve
 ```
+
+### Optional extras
+
+These power the new heavy features and are **not** installed by default (they're large):
+
+```bash
+# Voice mode (microphone + spoken replies)
+pip install -r requirements-voice.txt
+
+# Text-to-image generation (GPU strongly recommended; pick your torch build)
+pip install -r requirements-image.txt
+
+# Anonymous mode (Tor), Linux:
+sudo apt install -y tor torsocks
+```
+
+If an extra isn't installed, its control simply shows an "install: …" hint — the rest of the app runs fine.
 
 ---
 
@@ -111,13 +144,16 @@ Sk7ld-AI/
 ├── sk7ld_ai.py              # launcher  (GUI by default, --cli flag)
 ├── install.sh                   # system bootstrap (deps + Ollama + model)
 ├── sk7ldai/
-│   ├── themes.py                # the 8 themes + sidebar social links
+│   ├── themes.py                # the 5 themes + sidebar social links
 │   ├── arsenal.py               # tool registry, aliases, entrypoints, INTENT map
-│   ├── themes.py                # 3 themes (sk7ld / v1ru5 / baphomet)
-│   ├── config.py                # persisted settings (editable persona)
-│   ├── gui/visuals.py           # hexagon honeycomb + ambient backdrop
+│   ├── config.py                # persisted settings (persona + disclaimer flag)
 │   ├── feeds.py                 # live system stats + weather for the HUD
 │   ├── control.py               # JobControl - cancel/STOP for running jobs
+│   ├── netinfo.py               # public-IP / Tor-exit-IP / geo lookups
+│   ├── anon.py                  # anonymous mode — Tor SOCKS tunnel control
+│   ├── updater.py               # self-update (git pull) + Linux system update
+│   ├── voice.py                 # STT/TTS engine + "Skuld" wake word
+│   ├── imagegen.py              # text-to-image (diffusers, optional)
 │   ├── data/blackarch.json      # 1,700+ BlackArch tools, Kali-filtered + de-duped
 │   ├── ollama_client.py         # stdlib Ollama wrapper (list/pull/generate/chat)
 │   ├── installer.py             # apt→pip→go→git install engine (confirm-gated)
@@ -126,7 +162,8 @@ Sk7ld-AI/
 │   ├── cli.py                   # headless REPL (same engine as the GUI)
 │   └── gui/
 │       ├── app.py               # main CustomTkinter window
-│       └── dialogs.py           # tool chooser · install confirm · forge model
+│       ├── visuals.py           # voice globe + hexagon honeycomb + backdrop
+│       └── dialogs.py           # disclaimer · tool chooser · install · forge model
 └── assets/sk7ld-ai.desktop  # desktop launcher entry
 ```
 
@@ -136,7 +173,7 @@ Sk7ld-AI/
 
 ## 🎨 Themes & Models
 
-- Switch themes live from the sidebar dropdown
+- Switch themes live from the sidebar dropdown; `v1ru5-ai` reveals the second Instagram handle above the dropdowns, exactly as in the original.
 - **Model** dropdown lists your installed Ollama tags; **Ping Models** refreshes them; **Forge New Model** pulls base models (`1.5b` → `32b`). Streaming pull progress prints into the chat.
 
 ---
@@ -151,6 +188,6 @@ Sk7ld-AI is built for **professional penetration testing, red-team engagements, 
 
 *The longship is crewed. The raid begins.* **Skål.**
 
-MIT © Skuldexter-web · @s.k.7.l.d
+MIT © SK7LD · @s.k.7.l.d
 
 </div>

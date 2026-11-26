@@ -325,3 +325,70 @@ class PersonaDialog(ctk.CTkToplevel):
     def show(self):
         self.master.wait_window(self)
         return self.result
+
+
+class DisclaimerDialog(ctk.CTkToplevel):
+    """
+    One-time authorised-use disclaimer shown on first launch.
+    `.show()` returns True (agreed) or False (declined / closed).
+    """
+
+    TEXT = (
+        "SK7LD-AI is an offensive-security AI agent built for red teamers, "
+        "penetration testers, cybersecurity personnel and white-hat hackers.\n\n"
+        "By continuing you confirm that:\n\n"
+        "  •  You will ONLY use SK7LD-AI, and any tool it launches, against "
+        "systems you OWN or have EXPLICIT WRITTEN AUTHORISATION to test.\n\n"
+        "  •  You will stay within the agreed scope and rules of engagement, "
+        "and keep proper records of your activity.\n\n"
+        "  •  You are solely responsible for complying with all applicable "
+        "laws and regulations in your jurisdiction.\n\n"
+        "Unauthorised access to computer systems is illegal. The authors "
+        "accept no liability for misuse.\n\n"
+        "Use responsibly. Hack the planet — ethically."
+    )
+
+    def __init__(self, master, theme: dict, version: str = ""):
+        super().__init__(master)
+        self.result = False
+        self.title("SK7LD-AI — Authorised Use Only")
+        self.geometry("620x520")
+        self.configure(fg_color=theme["sidebar"])
+        self.transient(master)
+        self.after(150, self.grab_set)
+
+        ctk.CTkLabel(self, text="⚠  AUTHORISED USE ONLY  ⚠", text_color=theme["title"],
+                     font=ctk.CTkFont(size=17, weight="bold")).pack(padx=20, pady=(20, 2))
+        if version:
+            ctk.CTkLabel(self, text=f"SK7LD-AI v{version}", text_color=theme["sub_col"],
+                         font=ctk.CTkFont(size=11)).pack(padx=20, pady=(0, 10))
+
+        box = ctk.CTkTextbox(self, fg_color=theme["box"], text_color=theme["text"],
+                             border_color=theme["border"], border_width=1,
+                             wrap="word", corner_radius=8)
+        box.pack(padx=20, pady=6, fill="both", expand=True)
+        box.insert("end", self.TEXT)
+        box.configure(state="disabled")
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(padx=20, pady=(8, 18), fill="x")
+        ctk.CTkButton(row, text="I AGREE — ENTER", fg_color=theme["accent"],
+                      text_color=theme["accent_text"], hover_color=theme["hover"],
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      command=self._agree).pack(side="left", expand=True, fill="x", padx=(0, 6))
+        ctk.CTkButton(row, text="Decline & Exit", fg_color="#8b1a1a",
+                      text_color="#ffffff", hover_color="#b22222",
+                      command=self._decline).pack(side="left", expand=True, fill="x", padx=(6, 0))
+        self.protocol("WM_DELETE_WINDOW", self._decline)
+
+    def _agree(self):
+        self.result = True
+        self.destroy()
+
+    def _decline(self):
+        self.result = False
+        self.destroy()
+
+    def show(self) -> bool:
+        self.master.wait_window(self)
+        return self.result

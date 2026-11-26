@@ -14,13 +14,13 @@ arsenal (with short descriptions), confirms before installing anything that is
 missing, then runs the tool and can feed the output back to the local LLM for
 analysis.
 
-Brand : SKALDSEC        GitHub : skuldexter-web        IG : @s.k.7.l.d
+Brand : SK7LD        GitHub : skuldexter-web        IG : @s.k.7.l.d
 License: MIT
 """
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 __app_name__ = "Sk7ld-AI"
-__brand__ = "SKALDSEC"
+__brand__ = "SK7LD"
 
 # Only base models, per spec.
 DEFAULT_MODEL = "qwen2.5-coder:1.5b-base"

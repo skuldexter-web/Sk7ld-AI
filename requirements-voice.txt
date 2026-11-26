@@ -1,0 +1,7 @@
+# Sk7ld-AI - OPTIONAL voice stack (Voice Mode: listen + speak).
+# Install only if you want microphone input and spoken replies.
+#   pip install -r requirements-voice.txt
+faster-whisper>=1.0.0
+sounddevice>=0.4.6
+soundfile>=0.12.1
+pyttsx3>=2.90

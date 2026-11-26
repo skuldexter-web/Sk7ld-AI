@@ -28,7 +28,7 @@ banner() {
   echo "  ███████ ██    ██ ██████  ███████ ██████"
   echo "  ██      ██    ██ ██   ██ ██      ██   ██   SK7LD-AI"
   echo "  ███████ ██    ██ ██████  █████   ██████    Digital Longship"
-  echo "       ██ ██    ██ ██      ██      ██   ██   SKALDSEC"
+  echo "       ██ ██    ██ ██      ██      ██   ██   SK7LD"
   echo "  ███████  ██████  ██      ███████ ██   ██   @s.k.7.l.d"
   echo -e "${NC}${D}  GUI/CLI hybrid local-AI security console${NC}\n"
 }
@@ -50,8 +50,8 @@ install_system_deps() {
   $SUDO apt-get update -qq 2>/dev/null
   DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq \
     python3 python3-pip python3-tk python3-venv git curl \
-    build-essential 2>/dev/null
-  ok "Core system packages ready"
+    build-essential tor torsocks 2>/dev/null
+  ok "Core system packages ready (incl. tor for anonymous mode)"
 }
 
 install_python_deps() {

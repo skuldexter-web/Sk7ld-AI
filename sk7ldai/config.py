@@ -61,3 +61,14 @@ def reset_system_prompt() -> bool:
 
 def is_custom_persona() -> bool:
     return get_system_prompt() != DEFAULT_SYSTEM_PROMPT
+
+
+# ── one-time authorised-use disclaimer ──────────────────────────────────
+def disclaimer_accepted() -> bool:
+    return bool(load().get("disclaimer_accepted"))
+
+
+def accept_disclaimer() -> bool:
+    cfg = load()
+    cfg["disclaimer_accepted"] = True
+    return save(cfg)

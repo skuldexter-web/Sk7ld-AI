@@ -31,7 +31,7 @@ BANNER = f"""{Y}{B}
   ███████ ██    ██ ██████  ███████ ██████
   ██      ██    ██ ██   ██ ██      ██   ██   SK7LD-AI
   ███████ ██    ██ ██████  █████   ██████    Digital Longship v{__version__}
-       ██ ██    ██ ██      ██      ██   ██   SKALDSEC · @s.k.7.l.d
+       ██ ██    ██ ██      ██      ██   ██   SK7LD · @s.k.7.l.d
   ███████  ██████  ██      ███████ ██   ██
 {NC}{D}  GUI/CLI hybrid · local Ollama · arsenal orchestration{NC}
 """

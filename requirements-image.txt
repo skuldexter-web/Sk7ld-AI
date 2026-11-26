@@ -1,0 +1,8 @@
+# Sk7ld-AI - OPTIONAL text-to-image stack.
+# A GPU is strongly recommended. Pick the torch build for your hardware
+# (see https://pytorch.org). Then:
+#   pip install -r requirements-image.txt
+diffusers>=0.27.0
+transformers>=4.40.0
+accelerate>=0.30.0
+torch>=2.2.0
