@@ -173,7 +173,7 @@ Sk7ld-AI/
 
 ## 🎨 Themes & Models
 
-- Switch themes live from the sidebar dropdown; `v1ru5-ai` reveals the second Instagram handle above the dropdowns, exactly as in the original.
+- Switch themes live from the sidebar, exactly as in the original.
 - **Model** dropdown lists your installed Ollama tags; **Ping Models** refreshes them; **Forge New Model** pulls instruct models (`3b` → `32b`). Streaming pull progress prints into the chat.
 
 ---
