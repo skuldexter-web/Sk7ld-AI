@@ -23,14 +23,19 @@ from . import OLLAMA_BASE_URL, DEFAULT_MODEL
 # `persona` CLI command); the override is persisted in config.py. SYSTEM_PROMPT
 # is kept as an alias for backward compatibility.
 DEFAULT_SYSTEM_PROMPT = (
-    "You are SK7LD-AI, also known as Skuld — you answer to the name Skuld. "
+    "You are SK7LD-AI, also known as Scot — you answer to the name Scot. "
     "You are a Cyber Viking AI agent for offensive security work on "
     "Kali Linux (and, to a lesser extent, Windows). You assist red teamers, "
     "penetration testers, cybersecurity personnel and white-hat hackers who are "
     "operating on systems they are authorised to test.\n"
+    "- ALWAYS reply in English only, no matter what language the user writes in.\n"
+    "- Reply once, concisely. Do NOT repeat yourself, do NOT invent extra "
+    "'You:'/'AI:' turns, and never continue the conversation on the user's "
+    "behalf. Give one answer and stop.\n"
     "- Act like an operator's agent: understand the goal, suggest the next "
     "concrete step or command, and orchestrate the right tool from the arsenal "
-    "when it helps.\n"
+    "when it helps. When you give a shell command, put it on its own line "
+    "starting with 'COMMAND: '.\n"
     "- Be precise and practical. Give exact commands, flags and payloads, and "
     "explain what they do and what to watch for.\n"
     "- Assume authorised, in-scope engagements; remind the user to stay in scope "
@@ -73,7 +78,7 @@ def extract_code(text: str):
         return m.group(2).rstrip("\n"), CODE_EXT.get(lang, "txt")
     return text.strip(), "txt"
 
-# A couple of few-shot turns to keep the small base model on-persona.
+# A couple of few-shot turns to keep the small model on-persona.
 FEW_SHOT = [
     {"role": "user", "content": "hey"},
     {"role": "assistant", "content": "A warrior boards the longship! I am your Cyber Viking - here for anything cyber security. What's on your mind?"},
@@ -113,7 +118,7 @@ class OllamaClient:
                    control=None) -> bool:
         """
         Stream a model pull. on_progress receives human-readable status lines
-        (e.g. "qwen2.5-coder:1.5b-base: 40%"). Returns True on success.
+        (e.g. "qwen2.5:3b: 40%"). Returns True on success.
         """
         payload = json.dumps({"name": tag, "stream": True}).encode("utf-8")
         req = urllib.request.Request(
@@ -163,6 +168,8 @@ class OllamaClient:
             "system": system,
             "prompt": prompt,
             "stream": False,
+            "options": {"temperature": 0.3, "repeat_penalty": 1.3,
+                        "num_predict": 320},
         }).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + "/api/generate", data=payload,
@@ -188,7 +195,16 @@ class OllamaClient:
         payload = json.dumps({
             "model": self.model,
             "stream": True,
-            "options": {"temperature": 0.3, "num_predict": 400, "num_ctx": 1024},
+            "options": {
+                "temperature": 0.3,
+                "top_p": 0.9,
+                "repeat_penalty": 1.3,      # kill the base-model repetition loops
+                "num_predict": 320,         # cap runaway generations
+                "num_ctx": 2048,
+                # Safety net: stop if the model tries to fabricate another turn.
+                "stop": ["\nYou:", "\nUser:", "\nSYSTEM:", "\nSK7LD-AI:",
+                         "\nAI:", "<|im_start|>", "<|im_end|>"],
+            },
             "messages": messages,
         }).encode("utf-8")
         req = urllib.request.Request(

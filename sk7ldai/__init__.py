@@ -18,10 +18,13 @@ Brand : SK7LD        GitHub : skuldexter-web        IG : @s.k.7.l.d
 License: MIT
 """
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 __app_name__ = "Sk7ld-AI"
 __brand__ = "SK7LD"
 
-# Only base models, per spec.
-DEFAULT_MODEL = "qwen2.5-coder:1.5b-base"
+# Default chat model: a small *instruct* model (not a base/completion model).
+# Base models don't follow chat turns and degenerate into loops/echoes in a
+# conversation; the instruct model stays on-persona and stops cleanly. It's in
+# the requested small (3B) range; forge bigger ones from the sidebar.
+DEFAULT_MODEL = "qwen2.5:3b"
 OLLAMA_BASE_URL = "http://localhost:11434"

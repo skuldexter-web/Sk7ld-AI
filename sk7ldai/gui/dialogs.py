@@ -23,12 +23,13 @@ from ..arsenal import ToolAction, Intent
 from ..installer import is_available
 from ..ollama_client import DEFAULT_SYSTEM_PROMPT
 
-# Base-model install options (spec: base models only, 1.5b-base default).
+# Model install options. Instruct (chat) models - base models loop/echo in a
+# conversation, so the chat/voice assistant uses instruct-tuned models.
 INSTALL_OPTIONS = {
-    "default": ("qwen2.5-coder:1.5b-base", "Light (default)"),
-    "1": ("qwen2.5-coder:7b-base", "Medium, ~4.7 GB VRAM"),
-    "2": ("qwen2.5-coder:14b-base", "Strong, ~9 GB VRAM"),
-    "3": ("qwen2.5-coder:32b-base", "The flagship, ~20 GB VRAM"),
+    "default": ("qwen2.5:3b", "Light (default), ~2 GB"),
+    "1": ("qwen2.5:7b", "Medium, ~4.7 GB VRAM"),
+    "2": ("qwen2.5:14b", "Strong, ~9 GB VRAM"),
+    "3": ("qwen2.5:32b", "The flagship, ~20 GB VRAM"),
 }
 
 
@@ -234,18 +235,18 @@ class InstallModelDialog(ctk.CTkToplevel):
         theme = self._theme
         self._clear()
         tag, desc = INSTALL_OPTIONS["default"]
-        self.label.configure(text=f"Install the default base model?\n{tag} - {desc}\n\n[Y/n]")
+        self.label.configure(text=f"Install the default model?\n{tag} - {desc}\n\n[Y/n]")
         ctk.CTkButton(self.holder, text="Y (install default)", fg_color=theme["accent"],
                       text_color=theme["accent_text"], hover_color=theme["hover"],
                       command=lambda: self._choose(tag)).pack(pady=5, fill="x")
-        ctk.CTkButton(self.holder, text="n (pick a heavier base model)",
+        ctk.CTkButton(self.holder, text="n (pick a heavier model)",
                       fg_color=theme["border"], hover_color=theme["hover"],
                       text_color=theme["title"], command=self._step_pick).pack(pady=5, fill="x")
 
     def _step_pick(self):
         theme = self._theme
         self._clear()
-        self.label.configure(text="Choose a heavier base model:")
+        self.label.configure(text="Choose a heavier model:")
         for key in ("1", "2", "3"):
             tag, desc = INSTALL_OPTIONS[key]
             ctk.CTkButton(self.holder, text=f"{key}) {tag} - {desc}",

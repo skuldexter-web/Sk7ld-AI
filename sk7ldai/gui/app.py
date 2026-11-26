@@ -17,6 +17,7 @@ window alpha adds the genuine partial see-through to the real desktop.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 import tkinter.font as tkfont
@@ -751,6 +752,14 @@ class Sk7ldAIApp(ctk.CTk):
             self._run_system_update()
             return
 
+        # image-generation intent -> real image model, NOT the chat LLM
+        # (otherwise the LLM "draws" ASCII art). e.g. "make a cyberviking image".
+        if _re.search(r"\b(make|generate|create|draw|render|paint|gen(?:erate)?)\b"
+                      r"[^.]*?\b(image|images|picture|pic|photo|png|jpe?g|"
+                      r"artwork|wallpaper|logo|portrait)\b", low):
+            self._gen_image_run(self._image_subject(prompt))
+            return
+
         if self.code_mode:
             self._start_code(prompt)
             return
@@ -972,8 +981,8 @@ class Sk7ldAIApp(ctk.CTk):
                 self.append_chat("SYSTEM", "Voice mode needs the audio stack:\n  "
                                  + voicemod.missing_hint())
                 return
-            self.append_chat("SYSTEM", 'Voice mode ON — say "Skuld" to wake me, or use '
-                             "the 🎤 button. Replies are spoken aloud.")
+            self.append_chat("SYSTEM", 'Voice mode ON — say "Hey Scot" to wake me, or use '
+                             "the 🎤 button. Replies are spoken aloud (English).")
             if voicemod.stt_available():
                 self.voice.start_wake(self._on_wake)
         else:
@@ -982,7 +991,7 @@ class Sk7ldAIApp(ctk.CTk):
             self.append_chat("SYSTEM", "Voice mode OFF.")
 
     def _on_wake(self, command: str):
-        """Called from the wake-word thread when 'Skuld' is heard."""
+        """Called from the wake-word thread when 'Hey Scot' is heard."""
         self.after(0, self._wake_fire, command)
 
     def _wake_fire(self, command: str):
@@ -992,10 +1001,10 @@ class Sk7ldAIApp(ctk.CTk):
         self.after(1200, self._hide_orb)
         cmd = voicemod.strip_wake(command).strip()
         if cmd:
-            self.append_chat("SYSTEM", f'Skuld heard: "{cmd}"')
+            self.append_chat("SYSTEM", f'Scot heard: "{cmd}"')
             self._voice_submit(cmd)
         else:
-            self._append_line("[*] Skuld: yes? — say \"Skuld <command>\".")
+            self._append_line('[*] Scot: yes? — say "Hey Scot, <command>".')
 
     def _on_stt_model(self, name):
         self.voice.set_stt_model(name)
@@ -1025,7 +1034,7 @@ class Sk7ldAIApp(ctk.CTk):
             threading.Thread(target=run, daemon=True).start()
 
     def _voice_submit(self, text: str):
-        text = voicemod.strip_wake(text)   # drop a leading "Skuld," if present
+        text = voicemod.strip_wake(text)   # drop a leading "Hey Scot," if present
         self.input_entry.delete(0, "end")
         self.input_entry.insert(0, text)
         self.send_message()
@@ -1044,19 +1053,70 @@ class Sk7ldAIApp(ctk.CTk):
         if not prompt:
             self.append_chat("SYSTEM", "Type an image prompt first, then GENERATE IMAGE.")
             return
-        if not imgmod.available():
-            self.append_chat("SYSTEM", "Image generation needs: " + imgmod.missing_hint())
-            return
         self.input_entry.delete(0, "end")
+        self._gen_image_run(prompt)
+
+    _STOP_SUBJ = {"me", "you", "us", "it", "this", "that", "one", "him", "her", "them"}
+
+    @classmethod
+    def _image_subject(cls, text: str) -> str:
+        """Pull the actual subject out of 'make a <subject> image for me'."""
+        t = _re.sub(r"^\s*please[,\s]+", "", (text or "").strip(), flags=_re.I)
+        noun = _re.search(r"\b(image|images|picture|pic|photo|png|jpe?g|"
+                          r"artwork|wallpaper|logo|portrait)\b", t, _re.I)
+        if not noun:
+            return t.strip(" .!,:") or text
+        after = _re.sub(r"^(?:of|for|showing|with|about|:|,)\s+", "",
+                        t[noun.end():].strip(), flags=_re.I)
+        after = _re.sub(r"\bfor (?:me|you|us)\b", "", after, flags=_re.I).strip(" .!,:")
+        before = _re.sub(r"\b(make|generate|create|draw|render|paint|gen(?:erate)?|"
+                         r"me|a|an|the|some|cool|nice|of|please)\b", "",
+                         t[:noun.start()], flags=_re.I).strip(" .!,:")
+
+        def meaningful(s: str) -> bool:
+            return len(s) >= 2 and s.lower() not in cls._STOP_SUBJ
+
+        if meaningful(after):
+            subj = after
+        elif meaningful(before):
+            subj = before
+        else:
+            subj = (before + " " + after).strip()
+        return subj.strip(" .!,:") or text
+
+    def _gen_image_run(self, prompt: str):
+        if self.is_busy:
+            return
+        if not imgmod.available():
+            self.append_chat("SYSTEM", "Image generation needs the image stack:\n  "
+                             + imgmod.missing_hint())
+            return
         self.append_chat("IMAGE", prompt)
         self._set_busy(True)
 
         def run():
+            path = None
             try:
-                self.imggen.generate(prompt, log=lambda m: self.after(0, self._append_line, m))
+                path = self.imggen.generate(
+                    prompt, log=lambda m: self.after(0, self._append_line, m))
             finally:
                 self.after(0, lambda: self._set_busy(False))
+                if path:
+                    self.after(0, self._show_image, path)
         threading.Thread(target=run, daemon=True).start()
+
+    def _show_image(self, path: str):
+        """Open the finished PNG in the OS image viewer so the user sees it."""
+        try:
+            if is_windows():
+                os.startfile(path)  # type: ignore[attr-defined]
+            else:
+                import subprocess
+                opener = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.Popen([opener, path],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as exc:  # noqa: BLE001
+            self._append_line(f"[!] Saved, but couldn't auto-open it: {exc}")
 
     # ════════════════════════════════════════════════════════════════════
     #  ANONYMOUS MODE (Tor)

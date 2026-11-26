@@ -1,7 +1,12 @@
-# Sk7ld-AI - OPTIONAL voice stack (Voice Mode: listen + speak).
-# Install only if you want microphone input and spoken replies.
+# Sk7ld-AI - voice stack (Voice Mode: listen + speak).
+# Installed automatically by install.sh / install.ps1; or by hand:
 #   pip install -r requirements-voice.txt
+# NOTE: sounddevice needs PortAudio and pyttsx3 needs eSpeak-NG on Linux -
+# the installer adds those system packages. On Windows, pyttsx3's SAPI5 driver
+# needs pywin32 (pulled in below) for spoken replies to work.
 faster-whisper>=1.0.0
 sounddevice>=0.4.6
 soundfile>=0.12.1
 pyttsx3>=2.90
+numpy>=1.23.0
+pywin32>=306; sys_platform == "win32"

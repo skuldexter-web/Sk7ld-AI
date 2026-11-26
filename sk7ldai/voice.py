@@ -32,21 +32,30 @@ LogFn = Callable[[str], None]
 STT_MODELS = ["tiny", "base", "small", "medium", "large-v3"]
 DEFAULT_STT = "base"
 
-# Wake word: in Voice Mode, Sk7ld-AI reacts when it hears its name "Skuld".
-WAKE_WORD = "skuld"
-WAKE_VARIANTS = ("skuld", "skuldt", "scold", "skold", "skuhld", "skuild", "sculd")
+# Wake word: in Voice Mode, Sk7ld-AI reacts when it hears its name "Hey Scot".
+# (Whisper transcribes it a few different ways, so we accept close variants.)
+WAKE_WORD = "hey scot"
+# Longest/most-specific first so strip_wake removes the full phrase, not just "scot".
+WAKE_VARIANTS = (
+    "hey scott", "hey scot", "hey scout", "hey skot", "hey skott",
+    "hi scott", "hi scot", "a scott", "a scot",
+    "scott", "scot", "skot", "skott",
+)
 
 
 def strip_wake(text: str) -> str:
-    """Remove a leading 'Skuld[,]' (its name) from a spoken command."""
+    """Remove a leading wake word (e.g. 'Hey Scot,') from a spoken command."""
     import re
-    return re.sub(r"^\s*(" + "|".join(WAKE_VARIANTS) + r")[\s,:.!]*", "",
-                  text or "", flags=re.IGNORECASE).strip()
+    # variants are longest-first already, so the alternation is greedy-correct
+    return re.sub(r"^\s*(?:hey|hi|a)?[\s,]*(" + "|".join(WAKE_VARIANTS) + r")[\s,:.!-]*",
+                  "", text or "", flags=re.IGNORECASE).strip()
 
 
 def has_wake(text: str) -> bool:
-    low = (text or "").lower()
-    return any(v in low for v in WAKE_VARIANTS)
+    low = " " + (text or "").lower() + " "
+    # match "scot"/"scott" as a whole word (so it doesn't fire on, e.g., "scotch")
+    import re
+    return bool(re.search(r"\b(hey |hi |)(scot|scott|scout|skot|skott)\b", low))
 
 VOICE_DIR = Path(os.environ.get(
     "SK7LD_AI_VOICES", str(Path.home() / ".local" / "share" / "sk7ld-ai" / "piper")))
@@ -189,19 +198,20 @@ class VoiceEngine:
             return None
 
     def _transcribe(self, audio) -> str:
+        # Force English so the model never switches languages on noisy audio.
         self._load_whisper()
         if self._whisper_backend == "faster-whisper":
-            segments, _ = self._whisper.transcribe(audio, language=None)
+            segments, _ = self._whisper.transcribe(audio, language="en")
             return " ".join(s.text for s in segments).strip()
-        return self._whisper.transcribe(audio)["text"].strip()
+        return self._whisper.transcribe(audio, language="en")["text"].strip()
 
     @property
     def listening(self) -> bool:
         return self._listening
 
-    # ── wake word ("Skuld") - only runs while Voice Mode is on ──────────
+    # ── wake word ("Hey Scot") - only runs while Voice Mode is on ───────
     def start_wake(self, on_wake: Callable[[str], None]) -> bool:
-        """Continuously listen for the name 'Skuld' and fire on_wake(command)."""
+        """Continuously listen for the name 'Hey Scot' and fire on_wake(command)."""
         if self._wake_on:
             return True
         if not stt_available():
@@ -211,7 +221,7 @@ class VoiceEngine:
         self._wake_thread = threading.Thread(
             target=self._wake_loop, args=(on_wake,), daemon=True)
         self._wake_thread.start()
-        self.on_status('[*] Say "Skuld" to wake me.')
+        self.on_status('[*] Say "Hey Scot" to wake me.')
         return True
 
     def stop_wake(self):
@@ -290,16 +300,58 @@ class VoiceEngine:
             except Exception:
                 pass
         # Fallback: pyttsx3 (system voices, no download)
+        com_ready = False
         try:
+            # On Windows, pyttsx3 uses SAPI5 (COM). This runs in a worker thread,
+            # so COM must be initialised here or SAPI raises "CoInitialize was not
+            # called". Needs pywin32 (installed by the installer / requirements).
+            if os.name == "nt":
+                try:
+                    import pythoncom
+                    pythoncom.CoInitialize()
+                    com_ready = True
+                except Exception:
+                    pass  # pyttsx3 may still work; if not, the except below reports
             import pyttsx3
             eng = pyttsx3.init()
-            if self.tts_voice and self.tts_voice != "(system default)":
-                for v in eng.getProperty("voices"):
-                    if v.name == self.tts_voice:
-                        eng.setProperty("voice", v.id); break
+            self._select_voice(eng)
             eng.say(text); eng.runAndWait(); eng.stop()
         except Exception as exc:  # noqa: BLE001
-            self.on_status(f"[!] Speech unavailable: {exc}")
+            hint = ""
+            if os.name == "nt" and ("pywintypes" in str(exc) or "pywin32" in str(exc)
+                                    or "CoInitialize" in str(exc)):
+                hint = "  (run: pip install pywin32)"
+            self.on_status(f"[!] Speech unavailable: {exc}{hint}")
+        finally:
+            if com_ready:
+                try:
+                    import pythoncom
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+
+    def _select_voice(self, eng) -> None:
+        """Pick the chosen voice, or auto-pick an English one for English output."""
+        try:
+            voices = eng.getProperty("voices")
+        except Exception:
+            return
+        # explicit choice wins
+        if self.tts_voice and self.tts_voice != "(system default)":
+            for v in voices:
+                if v.name == self.tts_voice:
+                    eng.setProperty("voice", v.id)
+                    return
+        # otherwise prefer an English voice so speech matches English replies
+        for v in voices:
+            langs = ""
+            for lg in (getattr(v, "languages", None) or []):
+                langs += (lg.decode("latin-1") if isinstance(lg, bytes) else str(lg)).lower()
+            name = (getattr(v, "name", "") or "").lower()
+            vid = (getattr(v, "id", "") or "").lower()
+            if "en" in langs or "english" in name or "en-" in vid or "en_us" in vid:
+                eng.setProperty("voice", v.id)
+                return
 
     @staticmethod
     def _play_wav(path: str):

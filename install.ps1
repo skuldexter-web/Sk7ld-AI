@@ -31,10 +31,31 @@ if (-not $py) {
 Ok "Using Python: $py"
 
 # --- Python dependencies ---
-Info "Installing Python dependencies (customtkinter, psutil, Pillow)..."
+Info "Installing core Python dependencies (customtkinter, psutil, Pillow)..."
 & $py -m pip install --upgrade pip | Out-Null
 & $py -m pip install -r requirements.txt
-Ok "Python dependencies ready"
+Ok "Core Python dependencies ready"
+
+# --- Voice stack (mic + speech). pywin32 is required for spoken replies (SAPI5). ---
+Info "Installing voice stack (faster-whisper, sounddevice, pyttsx3, pywin32)..."
+try {
+    & $py -m pip install -r requirements-voice.txt
+    # pywin32 needs a post-install step to register its COM DLLs for SAPI5 TTS
+    try { & $py -m pywin32_postinstall -install | Out-Null } catch { }
+    Ok "Voice stack ready"
+} catch {
+    Warn "Voice stack failed - Voice Mode stays off until: $py -m pip install -r requirements-voice.txt"
+}
+
+# --- Image stack (optional, large: pulls in torch) ---
+$ans = Read-Host "Install the text-to-image stack now? It pulls in torch (large). [y/N]"
+if ($ans -match '^(y|yes)$') {
+    Info "Installing image stack (diffusers, transformers, torch)..."
+    try { & $py -m pip install -r requirements-image.txt; Ok "Image stack ready" }
+    catch { Warn "Image stack failed - install later: $py -m pip install -r requirements-image.txt" }
+} else {
+    Info "Skipped image stack. Install later: $py -m pip install -r requirements-image.txt"
+}
 
 # --- Ollama ---
 if (Get-Command ollama -ErrorAction SilentlyContinue) {
@@ -50,8 +71,8 @@ if (Get-Command ollama -ErrorAction SilentlyContinue) {
 
 # --- default model ---
 if (Get-Command ollama -ErrorAction SilentlyContinue) {
-    Info "Pulling default base model: qwen2.5-coder:1.5b-base"
-    try { ollama pull qwen2.5-coder:1.5b-base } catch { Warn "Model pull failed - you can forge it from inside the app." }
+    Info "Pulling default model: qwen2.5:3b"
+    try { ollama pull qwen2.5:3b } catch { Warn "Model pull failed - you can forge it from inside the app." }
 }
 
 Write-Host ""

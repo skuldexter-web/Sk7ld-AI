@@ -36,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 That installs the Python dependencies (CustomTkinter, psutil, Pillow), installs
-Ollama if winget is available, and pulls the default base model.
+Ollama if winget is available, and pulls the default model.
 
 ## Run
 

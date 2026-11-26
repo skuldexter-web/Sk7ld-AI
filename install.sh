@@ -12,7 +12,7 @@ set -u
 R='\033[0;31m'; G='\033[0;32m'; C='\033[0;36m'; Y='\033[1;33m'
 B='\033[1m'; D='\033[2m'; NC='\033[0m'
 
-DEFAULT_MODEL="qwen2.5-coder:1.5b-base"
+DEFAULT_MODEL="qwen2.5:3b"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_LINK="/usr/local/bin/sk7ld-ai"
 
@@ -48,19 +48,56 @@ install_system_deps() {
   fi
   local SUDO=""; [[ "$EUID" -ne 0 ]] && SUDO="sudo"
   $SUDO apt-get update -qq 2>/dev/null
+  # core app + tor (anon) + audio drivers for the voice stack:
+  #   portaudio19-dev -> sounddevice (mic),  libsndfile1 -> soundfile,
+  #   espeak-ng       -> pyttsx3 spoken replies,  ffmpeg -> whisper decoding
   DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq \
     python3 python3-pip python3-tk python3-venv git curl \
-    build-essential tor torsocks 2>/dev/null
-  ok "Core system packages ready (incl. tor for anonymous mode)"
+    build-essential tor torsocks \
+    portaudio19-dev libportaudio2 libsndfile1 espeak-ng ffmpeg 2>/dev/null
+  ok "Core + audio system packages ready (tor, portaudio, espeak-ng, ffmpeg)"
+}
+
+# pip wrapper that works on PEP-668 "externally managed" systems (Kali/Debian)
+_pip() {
+  pip3 install -q --break-system-packages "$@" 2>/dev/null \
+    || pip3 install -q "$@" 2>/dev/null
 }
 
 install_python_deps() {
   step "Python dependencies"
-  if pip3 install -q --break-system-packages -r "$APP_DIR/requirements.txt" 2>/dev/null \
-     || pip3 install -q -r "$APP_DIR/requirements.txt" 2>/dev/null; then
-    ok "CustomTkinter installed"
+  if _pip -r "$APP_DIR/requirements.txt"; then
+    ok "Core Python deps installed (customtkinter, psutil, Pillow)"
   else
     err "pip install failed - try: pip3 install customtkinter"
+  fi
+
+  info "Installing voice stack (mic + speech)..."
+  if _pip -r "$APP_DIR/requirements-voice.txt"; then
+    ok "Voice stack installed (faster-whisper, sounddevice, pyttsx3)"
+  else
+    warn "Voice stack failed - Voice Mode will be disabled until you run:"
+    warn "  pip3 install --break-system-packages -r requirements-voice.txt"
+  fi
+
+  step "Image stack (optional, large)"
+  warn "The text-to-image stack pulls in torch and can be >2 GB."
+  local _ans="n"
+  if [[ -t 0 ]]; then
+    read -r -p "  Install it now? [y/N] " _ans
+  else
+    warn "Non-interactive shell - skipping image stack."
+  fi
+  if [[ "${_ans,,}" == "y" || "${_ans,,}" == "yes" ]]; then
+    info "Installing image stack (this can take a while)..."
+    if _pip -r "$APP_DIR/requirements-image.txt"; then
+      ok "Image stack installed (diffusers, transformers, torch)"
+    else
+      warn "Image stack failed - install later with:"
+      warn "  pip3 install --break-system-packages -r requirements-image.txt"
+    fi
+  else
+    info "Skipped. Install later with: pip3 install -r requirements-image.txt"
   fi
 }
 
@@ -84,7 +121,7 @@ install_ollama() {
 }
 
 pull_default_model() {
-  step "Default base model: $DEFAULT_MODEL"
+  step "Default model: $DEFAULT_MODEL"
   if ! command -v ollama &>/dev/null; then
     warn "Ollama missing - skipping model pull."
     return
@@ -92,7 +129,7 @@ pull_default_model() {
   if ollama list 2>/dev/null | awk '{print $1}' | grep -Fxq "$DEFAULT_MODEL"; then
     ok "Model already present"
   else
-    info "Pulling $DEFAULT_MODEL (you can forge heavier base models in-app)..."
+    info "Pulling $DEFAULT_MODEL (you can forge heavier models in-app)..."
     ollama pull "$DEFAULT_MODEL" || warn "Pull failed - retry from inside the app (Forge New Model)."
   fi
 }

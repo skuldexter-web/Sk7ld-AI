@@ -30,7 +30,7 @@ The chat window doesn't just *talk* about security tools — it **detects your i
 ### New in this build
 - **🛡️ Authorised-use disclaimer** — a one-time gate on first launch states the rules of engagement (own/authorised targets only). Accept once (**I AGREE — ENTER**) and it's remembered; **Decline & Exit** closes the app.
 - **🎤 Voice mode** — talk to SK7LD-AI and hear it reply. Listening uses **Whisper** (dropdown: `tiny`→`large-v3`, default **`base`** so it won't blow up your PC); speaking uses **Piper voices** or your OS voices. Pull heavier listening/speaking models from the dropdowns. *(Optional audio stack — see Install.)*
-- **🗣️ Wake word "Skuld"** — in Voice mode, SK7LD-AI listens for its name. Say *"Skuld, scan 10.0.0.5"* and it wakes, strips the name and runs the command. Wake listening is **only** active in Voice mode (never in CLI).
+- **🗣️ Wake word "Hey Scot"** — in Voice mode, SK7LD-AI listens for its name. Say *"Hey Scot, scan 10.0.0.5"* and it wakes, strips the name and runs the command. Wake listening is **only** active in Voice mode (never in CLI).
 - **🪐 Animated voice orb — one per theme** — an orb appears over the console while it works, with **two distinct motions**: **calm & slow** when **listening**, **faster, pulsing & morphing** when **speaking**. Each theme gets its *own* shape, auto-tinted to its colours:
   - **`sk7ld`** → the **SK7LD viking** — the official horned-helmet warrior (ridged dome + flame crest, studded band, furrowed brow, braided beard) inside a spinning code-ring.
   - **`v1ru5`** → the **V1RU5 virus** 🦠 — the official spiky capsid with glowing-green angry eyes and a fanged, dripping grin; spikes jab and the maw opens as it talks.
@@ -49,7 +49,7 @@ The chat window doesn't just *talk* about security tools — it **detects your i
 - **Live weather feed** — current conditions + 3-day forecast in the HUD (via keyless wttr.in, IP-located; degrades to "offline" with no connection).
 - **Live system feeds** — CPU, GPU, RAM and ethernet (up/down) throughput update every second, with bars that turn amber/red under load. Uses `psutil` when present, else parses `/proc` + `/sys` directly.
 - **Local & private** — everything runs through your own Ollama node. No cloud, no keys.
-- **Base models only**, default **`qwen2.5-coder:1.5b-base`**; forge heavier `7b` / `14b` / `32b` base variants from the sidebar.
+- **Small instruct models**, default **`qwen2.5:3b`** (coherent for chat + voice; base/completion models loop and echo in a conversation); forge heavier `7b` / `14b` / `32b` variants from the sidebar.
 - **Intent-driven tool orchestration** — type *"scan 10.0.0.5"* or *"find subdomains of example.com"* and Sk7ld-AI asks **which tool** you want, each with a one-line description.
 - **Confirm-before-install** — any missing tool or dependency shows exactly *how* it would be installed (apt / pip / go / git) and installs **only on your explicit yes**.
 - **Scan → AI analysis loop** — capture-style tools stream their output into the chat, then offer a tactical breakdown from the model.
@@ -79,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 See [`README-WINDOWS.md`](README-WINDOWS.md) for the Windows specifics (it exposes only Windows-capable tools — the full list is in [`windows_tools.txt`](windows_tools.txt)).
 
-The bootstrap installs Python + CustomTkinter + psutil + Pillow, installs Ollama, and pulls the default base model. It does **not** mass-install offensive tools — those install on-demand, with your confirmation, from inside the app.
+The bootstrap installs Python + CustomTkinter + psutil + Pillow, the **voice stack** (faster-whisper, sounddevice, pyttsx3 + the audio drivers: PortAudio, eSpeak-NG, ffmpeg on Linux / pywin32 on Windows), optionally the **image stack** (diffusers + torch), installs Ollama, and pulls the default model. It does **not** mass-install offensive tools — those install on-demand, with your confirmation, from inside the app.
 
 Manual route (either OS):
 
@@ -152,7 +152,7 @@ Sk7ld-AI/
 │   ├── netinfo.py               # public-IP / Tor-exit-IP / geo lookups
 │   ├── anon.py                  # anonymous mode — Tor SOCKS tunnel control
 │   ├── updater.py               # self-update (git pull) + Linux system update
-│   ├── voice.py                 # STT/TTS engine + "Skuld" wake word
+│   ├── voice.py                 # STT/TTS engine + "Hey Scot" wake word (English-only)
 │   ├── imagegen.py              # text-to-image (diffusers, optional)
 │   ├── data/blackarch.json      # 1,700+ BlackArch tools, Kali-filtered + de-duped
 │   ├── ollama_client.py         # stdlib Ollama wrapper (list/pull/generate/chat)
@@ -174,7 +174,7 @@ Sk7ld-AI/
 ## 🎨 Themes & Models
 
 - Switch themes live from the sidebar dropdown; `v1ru5-ai` reveals the second Instagram handle above the dropdowns, exactly as in the original.
-- **Model** dropdown lists your installed Ollama tags; **Ping Models** refreshes them; **Forge New Model** pulls base models (`1.5b` → `32b`). Streaming pull progress prints into the chat.
+- **Model** dropdown lists your installed Ollama tags; **Ping Models** refreshes them; **Forge New Model** pulls instruct models (`3b` → `32b`). Streaming pull progress prints into the chat.
 
 ---
 
