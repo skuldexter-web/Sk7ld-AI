@@ -12,7 +12,7 @@ set -u
 R='\033[0;31m'; G='\033[0;32m'; C='\033[0;36m'; Y='\033[1;33m'
 B='\033[1m'; D='\033[2m'; NC='\033[0m'
 
-DEFAULT_MODEL="qwen2.5:3b"
+DEFAULT_MODEL="qwen2.5-coder:1.5b-base"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_LINK="/usr/local/bin/sk7ld-ai"
 

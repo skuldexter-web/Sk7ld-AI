@@ -20,7 +20,7 @@ DEFAULT_THEME = "sk7ld"
 # glass  = cozy frosted panel fill (sits over the ambient background)
 # glass2 = hexagon tile fill (a touch darker than glass)
 _SCHEMA_DEFAULTS = {
-    "emoji": "△", "subtitle": "", "show_v1ru5_ig": False, "orb": "plexus",
+    "emoji": "△", "subtitle": "", "show_v1ru5_ig": False,
     "bg": "#070a12", "sidebar": "#0b0f1c", "panel": "#0d1322", "box": "#0a0e1a",
     "glass": "#121a2e", "glass2": "#0e1626",
     "text": "#c9d6f0", "dim": "#6b7a99", "title": "#22d3ee", "sub_col": "#a855f7",
@@ -34,7 +34,6 @@ _RAW = OrderedDict([
     # ── sk7ld : cyan-blue + purple neon (default) ───────────────────────
     ("sk7ld", {
         "emoji": "△", "subtitle": "SK7LD // Neon Longship", "show_v1ru5_ig": False,
-        "orb": "viking",
         "bg": "#0a0f1c", "sidebar": "#11182b", "panel": "#141d33", "box": "#111a2e",
         "glass": "#18223b", "glass2": "#131d33",
         "text": "#d4e2f7", "dim": "#8294b5", "title": "#38d6f0", "sub_col": "#b388ff",
@@ -46,7 +45,6 @@ _RAW = OrderedDict([
     # ── v1ru5 : original green neural node (COLORS KEPT) ─────────────────
     ("v1ru5", {
         "emoji": "\U0001f9a0", "subtitle": "V1RU5 Neural Node", "show_v1ru5_ig": True,
-        "orb": "virus",
         "bg": "#0d0616", "sidebar": "#180a26", "panel": "#1c0e2e", "box": "#150722",
         "glass": "#231038", "glass2": "#1b0c2c",
         "text": "#d0a3ff", "dim": "#8a6aaa", "title": "#00ff66", "sub_col": "#a822e2",
@@ -58,7 +56,6 @@ _RAW = OrderedDict([
     # ── Cvlt of Baph0mau5 : crimson + gold occult-cyber ─────────────────
     ("Cvlt of Baph0mau5", {
         "emoji": "⛧", "subtitle": "Sigil of the Black Goat", "show_v1ru5_ig": False,
-        "orb": "sigil",
         "bg": "#100808", "sidebar": "#1a0c0c", "panel": "#1f0e0e", "box": "#190a0a",
         "glass": "#241111", "glass2": "#1c0d0d",
         "text": "#edd0c6", "dim": "#9c6a60", "title": "#ff3350", "sub_col": "#e0bd54",

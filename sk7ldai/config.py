@@ -63,6 +63,22 @@ def is_custom_persona() -> bool:
     return get_system_prompt() != DEFAULT_SYSTEM_PROMPT
 
 
+# ── chat/code model (base models only) ──────────────────────────────────
+def get_model() -> str:
+    """Saved model, sanitised to the allowed base models (default otherwise)."""
+    from . import sanitize_model
+    return sanitize_model(load().get("model"))
+
+
+def set_model(name: str) -> bool:
+    from . import ALLOWED_MODELS
+    if name not in ALLOWED_MODELS:
+        return False
+    cfg = load()
+    cfg["model"] = name
+    return save(cfg)
+
+
 # ── one-time authorised-use disclaimer ──────────────────────────────────
 def disclaimer_accepted() -> bool:
     return bool(load().get("disclaimer_accepted"))

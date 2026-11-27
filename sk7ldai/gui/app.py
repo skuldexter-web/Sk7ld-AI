@@ -27,14 +27,15 @@ from typing import Optional
 
 import customtkinter as ctk
 
-from .. import DEFAULT_MODEL, OLLAMA_BASE_URL, __app_name__, __version__
+from .. import (DEFAULT_MODEL, ALLOWED_MODELS, OLLAMA_BASE_URL, __app_name__,
+                __version__, sanitize_model)
 from ..themes import THEMES, DEFAULT_THEME, SOCIAL_LINKS, get_theme
 from ..ollama_client import OllamaClient
 from .. import orchestrator
 from ..orchestrator import analysis_prompt
 from ..control import JobControl
 from ..feeds import SystemStats, Weather, human_rate, human_bytes
-from ..ollama_client import DEFAULT_SYSTEM_PROMPT, CODE_SYSTEM_PROMPT, extract_code
+from ..ollama_client import DEFAULT_SYSTEM_PROMPT, extract_code
 from .. import config
 from .. import voice as voicemod
 from .. import imagegen as imgmod
@@ -45,7 +46,7 @@ from .. import netinfo
 from .. import updater
 from ..osenv import is_windows
 from .dialogs import (ConfirmDialog, ToolChoiceDialog, InstallModelDialog,
-                      PersonaDialog, DisclaimerDialog, INSTALL_OPTIONS)
+                      PersonaDialog, DisclaimerDialog)
 from .visuals import Honeycomb, make_ambient, VoiceOrb
 import re as _re
 
@@ -81,7 +82,8 @@ class Sk7ldAIApp(ctk.CTk):
         self.current_theme_name = DEFAULT_THEME
         theme = get_theme(self.current_theme_name)
 
-        self.client = OllamaClient(OLLAMA_BASE_URL, DEFAULT_MODEL)
+        self.client = OllamaClient(OLLAMA_BASE_URL, config.get_model())   # base model only
+        self._installed_models = set()
         self.client.system_prompt = config.get_system_prompt()   # load saved persona
         self.is_busy = False
         self.code_mode = False
@@ -103,6 +105,10 @@ class Sk7ldAIApp(ctk.CTk):
         self.vision_on = False
         self._public_ip = None
         self._blink = True
+        # streamed-token batching (smooth console, no per-token redraw storm)
+        self._ins_buf = []
+        self._ins_lock = threading.Lock()
+        self._ins_pending = False
 
         self.stats = SystemStats()
         self.weather = Weather()
@@ -271,8 +277,9 @@ class Sk7ldAIApp(ctk.CTk):
         # MODEL (chat / LLM)
         self.model_label = self._slabel(P, "CHAT MODEL")
         self.model_dropdown = ctk.CTkOptionMenu(
-            P, values=[DEFAULT_MODEL], command=self._on_model_change,
+            P, values=list(ALLOWED_MODELS), command=self._on_model_change,
             font=self.font(12, mono=True), corner_radius=10)
+        self.model_dropdown.set(self.client.model)
         self.model_dropdown.pack(padx=14, pady=(0, 6), fill="x")
         self._reg(self.model_dropdown, fg_color="glass2", button_color="accent",
                   button_hover_color="hover", text_color="entry_text")
@@ -657,28 +664,43 @@ class Sk7ldAIApp(ctk.CTk):
     #  MODELS
     # ════════════════════════════════════════════════════════════════════
     def _on_model_change(self, value: str):
+        value = sanitize_model(value)          # chat/code use base models only
         self.client.model = value
+        self.model_dropdown.set(value)
+        config.set_model(value)
+        if self._installed_models and value not in self._installed_models:
+            theme = get_theme(self.current_theme_name)
+            if ConfirmDialog(self, "Model not installed",
+                             f"{value} isn't installed yet.\n\nPull it now with Ollama?",
+                             theme).show():
+                self.install_model(value)
+        else:
+            self._append_line(f"[~] Chat/code model -> {value}")
 
     def fetch_models(self):
         def run():
             models = self.client.list_models()
-            if models and self._alive:
+            if models is not None and self._alive:
                 self.after(0, lambda: self._apply_models(models))
         threading.Thread(target=run, daemon=True).start()
 
     def _apply_models(self, models):
-        self.model_dropdown.configure(values=models)
-        if DEFAULT_MODEL in models:
-            self.model_dropdown.set(DEFAULT_MODEL); self.client.model = DEFAULT_MODEL
-        else:
-            self.model_dropdown.set(models[0]); self.client.model = models[0]
+        """Dropdown always shows the 3 base models; track which are installed."""
+        self._installed_models = {m for m in models if m in ALLOWED_MODELS}
+        self.model_dropdown.configure(values=list(ALLOWED_MODELS))
+        cur = sanitize_model(self.client.model)
+        if cur not in self._installed_models and self._installed_models:
+            # fall back to an installed base model (prefer the default)
+            cur = DEFAULT_MODEL if DEFAULT_MODEL in self._installed_models \
+                else sorted(self._installed_models)[0]
+        self.client.model = cur
+        self.model_dropdown.set(cur)
 
     def check_first_run(self):
         models = self.client.list_models()
         if models is None:
             return
-        known = [tag for tag, _ in INSTALL_OPTIONS.values()]
-        if not any(m in known for m in models):
+        if not any(m in ALLOWED_MODELS for m in models):
             self.open_install_dialog()
 
     def open_install_dialog(self):
@@ -713,6 +735,9 @@ class Sk7ldAIApp(ctk.CTk):
                 tag, on_progress=lambda line: self.after(0, self._append_line, f"  {line}"),
                 control=control)
             if ok:
+                if tag in ALLOWED_MODELS:          # make the new base model active
+                    self.client.model = tag
+                    config.set_model(tag)
                 self.after(0, self.append_chat, "SYSTEM", f"Model {tag} installed.")
                 self.after(0, self.fetch_models)
             elif control.cancelled:
@@ -726,19 +751,22 @@ class Sk7ldAIApp(ctk.CTk):
     #  LOADING ANIMATION
     # ════════════════════════════════════════════════════════════════════
     def update_loading_animation(self, active: bool, custom_text: Optional[str] = None):
+        # a generation token so only the most recent spinner loop keeps running
+        # (prevents two loops fighting over the label -> no flicker)
+        self._spin_gen = getattr(self, "_spin_gen", 0) + 1
         if not active:
             self.loading_label.configure(text="")
             return
-        chars = ["⠋", "⠙", "⠹", "⠸", "⠼",
-                 "⠴", "⠦", "⠧", "⠇", "⠏"]
+        gen = self._spin_gen
+        chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
         def animate(step=0):
-            if not self.is_busy or not self._alive:
-                self.loading_label.configure(text="")
+            if gen != self._spin_gen or not self.is_busy or not self._alive:
                 return
             icon = chars[step % len(chars)]
-            self.loading_label.configure(text=f"{icon} {custom_text or 'Processing node parameters...'}")
-            self.after(100, lambda: animate(step + 1))
+            self.loading_label.configure(
+                text=f"{icon} {custom_text or 'Processing node parameters...'}")
+            self.after(90, lambda: animate(step + 1))
         animate()
 
     # ════════════════════════════════════════════════════════════════════
@@ -761,6 +789,31 @@ class Sk7ldAIApp(ctk.CTk):
         self.chat_box.insert("end", text)
         self.chat_box.see("end")
         self.chat_box.configure(state="disabled")
+
+    def _insert_stream(self, token: str):
+        """Worker-thread safe: buffer streamed tokens, flush at ~30fps."""
+        with self._ins_lock:
+            self._ins_buf.append(token)
+            if self._ins_pending:
+                return
+            self._ins_pending = True
+        self.after(33, self._flush_stream)
+
+    def _flush_stream(self):
+        with self._ins_lock:
+            chunk = "".join(self._ins_buf)
+            self._ins_buf.clear()
+            self._ins_pending = False
+        if not chunk:
+            return
+        self.chat_box.configure(state="normal")
+        self.chat_box.insert("end", chunk)
+        self.chat_box.see("end")
+        self.chat_box.configure(state="disabled")
+
+    def _flush_stream_now(self):
+        """Drain any buffered tokens immediately (call before appending trailer)."""
+        self._flush_stream()
 
     def _set_busy(self, busy: bool):
         self.is_busy = busy
@@ -855,7 +908,8 @@ class Sk7ldAIApp(ctk.CTk):
             try:
                 for token in self.client.chat_stream(prompt, control=control):
                     buf.append(token)
-                    self.after(0, self._insert, token)
+                    self._insert_stream(token)
+                self.after(0, self._flush_stream_now)
                 if control.cancelled:
                     self.after(0, self._insert, "  [stopped]")
                 elif self.voice_mode and voicemod.tts_available():
@@ -882,10 +936,10 @@ class Sk7ldAIApp(ctk.CTk):
 
         def run():
             try:
-                for token in self.client.chat_stream(
-                        prompt, system=CODE_SYSTEM_PROMPT, few_shot=False, control=control):
+                for token in self.client.code_stream(prompt, control=control):
                     buf.append(token)
-                    self.after(0, self._insert, token)
+                    self._insert_stream(token)
+                self.after(0, self._flush_stream_now)
                 if control.cancelled:
                     self.after(0, self._insert, "  [stopped]")
                 else:
@@ -949,7 +1003,8 @@ class Sk7ldAIApp(ctk.CTk):
         def run():
             try:
                 for token in self.client.chat_stream(prompt, control=control):
-                    self.after(0, self._insert, token)
+                    self._insert_stream(token)
+                self.after(0, self._flush_stream_now)
                 if control.cancelled:
                     self.after(0, self._insert, "  [stopped]")
             finally:

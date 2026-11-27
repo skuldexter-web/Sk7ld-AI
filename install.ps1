@@ -81,8 +81,8 @@ if (Get-Command ollama -ErrorAction SilentlyContinue) {
 
 # --- default model ---
 if (Get-Command ollama -ErrorAction SilentlyContinue) {
-    Info "Pulling default model: qwen2.5:3b"
-    try { ollama pull qwen2.5:3b } catch { Warn "Model pull failed - you can forge it from inside the app." }
+    Info "Pulling default base model: qwen2.5-coder:1.5b-base"
+    try { ollama pull qwen2.5-coder:1.5b-base } catch { Warn "Model pull failed - you can forge it from inside the app." }
 }
 
 Write-Host ""

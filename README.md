@@ -31,11 +31,7 @@ The chat window doesn't just *talk* about security tools — it **detects your i
 - **🛡️ Authorised-use disclaimer** — a one-time gate on first launch states the rules of engagement (own/authorised targets only). Accept once (**I AGREE — ENTER**) and it's remembered; **Decline & Exit** closes the app.
 - **🎤 Voice mode** — talk to SK7LD-AI and hear it reply. Listening uses **Whisper** (dropdown: `tiny`→`large-v3`, default **`base`** so it won't blow up your PC); speaking uses **Piper voices** or your OS voices. Pull heavier listening/speaking models from the dropdowns. *(Optional audio stack — see Install.)*
 - **🗣️ Wake word "Hey Scot"** — in Voice mode, SK7LD-AI listens for its name. Say *"Hey Scot, scan 10.0.0.5"* and it wakes, strips the name and runs the command. Wake listening is **only** active in Voice mode (never in CLI).
-- **🪐 Animated voice orb — one per theme** — an orb appears over the console while it works, with **two distinct motions**: **calm & slow** when **listening**, **faster, pulsing & morphing** when **speaking**. Each theme gets its *own* shape, auto-tinted to its colours:
-  - **`sk7ld`** → the **SK7LD viking** — the official horned-helmet warrior (ridged dome + flame crest, studded band, furrowed brow, braided beard) inside a spinning code-ring.
-  - **`v1ru5`** → the **V1RU5 virus** 🦠 — the official spiky capsid with glowing-green angry eyes and a fanged, dripping grin; spikes jab and the maw opens as it talks.
-  - **`Cvlt of Baph0mau5`** → an **occult sigil** — ritual rings, a hexagram, an inverted pentagram and a horned XX-eyed goat glyph (flame flickers while speaking).
-  - **`black and white` / `white and black`** → the **plexus globe** (rotating wireframe sphere).
+- **🪐 Animated voice orb** — a glowing **plexus globe** (dots joined by lines on a rotating sphere, with a soft halo and floor shadow) appears over the console while it works, auto-tinted to the active theme. Two motions: **calm & slow** when **listening**, **brighter & pulsing** when **speaking**. Rendered with reused canvas items for smooth, flicker-free ~60 fps.
 - **🖼️ Text-to-image** — generate images from a prompt. Default is a **small** model (`tiny-sd`); switch to bigger ones (`sd-turbo`, `SD 1.5`, `SDXL`) from the dropdown, downloaded on first use. Just ask in chat (*"make a wolf image"*) or use **GENERATE IMAGE**; the finished PNG opens in your viewer. *(Optional image stack — GPU recommended.)*
 - **🎥 Object-detection mode** — flip **DETECT MODE** and SK7LD-AI opens your webcam and runs a fast local **YOLOv8n** model (via `ultralytics`), drawing live bounding boxes + labels. The detected labels feed straight into the assistant — ask *"what do you see?"* and it tells you (and speaks it in Voice mode). Pick the model (`n`/`s`/`m`) and camera from the sidebar. *(Optional vision stack — runs on CPU, GPU faster.)*
 - **🔌 Hardware scan** — **SCAN HARDWARE** enumerates your USB **RTL-SDR**, **GPS/GNSS**, **Wi-Fi** and **Bluetooth** dongles (by VID:PID + name), plus microphones, speakers and webcams — so you can see what's plugged in for war-driving, RF and voice/vision work.
@@ -52,7 +48,7 @@ The chat window doesn't just *talk* about security tools — it **detects your i
 - **Live weather feed** — current conditions + 3-day forecast in the HUD (via keyless wttr.in, IP-located; degrades to "offline" with no connection).
 - **Live system feeds** — CPU, GPU, RAM and ethernet (up/down) throughput update every second, with bars that turn amber/red under load. Uses `psutil` when present, else parses `/proc` + `/sys` directly.
 - **Local & private** — everything runs through your own Ollama node. No cloud, no keys.
-- **Small instruct models**, default **`qwen2.5:3b`** (coherent for chat + voice; base/completion models loop and echo in a conversation); forge heavier `7b` / `14b` / `32b` variants from the sidebar.
+- **Base models only** for chat + code: **`qwen2.5-coder:1.5b-base`** (default), **`qwen2.5-coder:3b-base`** and **`qwen2.5-coder:14b-base`** — pick one in the sidebar (it offers to pull it if missing). Base models are driven as raw completions with turn-stop sequences and a loop guard, so they answer once instead of rambling or repeating.
 - **Intent-driven tool orchestration** — type *"scan 10.0.0.5"* or *"find subdomains of example.com"* and Sk7ld-AI asks **which tool** you want, each with a one-line description.
 - **Confirm-before-install** — any missing tool or dependency shows exactly *how* it would be installed (apt / pip / go / git) and installs **only on your explicit yes**.
 - **Scan → AI analysis loop** — capture-style tools stream their output into the chat, then offer a tactical breakdown from the model.
@@ -190,7 +186,7 @@ Sk7ld-AI/
 ## 🎨 Themes & Models
 
 - Switch themes live from the sidebar dropdown; `v1ru5-ai` reveals the second Instagram handle above the dropdowns, exactly as in the original.
-- **Model** dropdown lists your installed Ollama tags; **Ping Models** refreshes them; **Forge New Model** pulls instruct models (`3b` → `32b`). Streaming pull progress prints into the chat.
+- **Chat model** dropdown always lists the three base models (`1.5b-base` / `3b-base` / `14b-base`); choosing one that isn't pulled yet offers to pull it. **Ping Models** refreshes what's installed; **Forge New Model** pulls one of the base models. Your choice is remembered. Streaming pull progress prints into the chat.
 
 ---
 

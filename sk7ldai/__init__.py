@@ -18,13 +18,22 @@ Brand : SK7LD        GitHub : skuldexter-web        IG : @s.k.7.l.d
 License: MIT
 """
 
-__version__ = "3.3.0"
+__version__ = "3.4.0"
 __app_name__ = "Sk7ld-AI"
 __brand__ = "SK7LD"
 
-# Default chat model: a small *instruct* model (not a base/completion model).
-# Base models don't follow chat turns and degenerate into loops/echoes in a
-# conversation; the instruct model stays on-persona and stops cleanly. It's in
-# the requested small (3B) range; forge bigger ones from the sidebar.
-DEFAULT_MODEL = "qwen2.5:3b"
+# Chat + code use BASE models only (qwen2.5-coder base family). Base models are
+# completion models, so ollama_client drives them with a raw transcript prompt,
+# stop sequences and a loop guard instead of a chat template.
+DEFAULT_MODEL = "qwen2.5-coder:1.5b-base"
+ALLOWED_MODELS = (
+    "qwen2.5-coder:1.5b-base",     # default, light
+    "qwen2.5-coder:3b-base",       # medium
+    "qwen2.5-coder:14b-base",      # strong (~9 GB VRAM)
+)
 OLLAMA_BASE_URL = "http://localhost:11434"
+
+
+def sanitize_model(name) -> str:
+    """Return `name` if it's an allowed base model, else the default."""
+    return name if name in ALLOWED_MODELS else DEFAULT_MODEL

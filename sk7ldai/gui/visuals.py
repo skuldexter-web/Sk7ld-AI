@@ -13,6 +13,7 @@ visuals.py - cozy cyberpunk visuals for the HUD.
 from __future__ import annotations
 
 import math
+import time
 import tkinter as tk
 from typing import Dict, Optional, Tuple
 
@@ -167,52 +168,58 @@ def make_ambient(w: int, h: int, theme: dict):
     return base
 
 
+
+
+def _mix(c1, c2, t: float) -> str:
+    """Blend two #rrggbb colours, t in 0..1."""
+    a, b = _hex2rgb(c1), _hex2rgb(c2)
+    return "#%02x%02x%02x" % tuple(
+        max(0, min(255, int(a[i] + (b[i] - a[i]) * t))) for i in range(3))
+
+
 # ════════════════════════════════════════════════════════════════════════
-#  VOICE ORB  (animated plexus wireframe sphere for listen / talk)
+#  VOICE ORB  (smooth plexus wireframe globe for listen / talk)
 # ════════════════════════════════════════════════════════════════════════
 class VoiceOrb(tk.Canvas):
     """
-    An animated "orb" shown while Sk7ld-AI is listening or talking. Every theme
-    gets its OWN orb shape (``theme["orb"]``), but all share the same two-state
-    motion and are drawn in the active theme's colours:
+    A glowing plexus globe - dots joined by faint lines on a rotating sphere,
+    with depth fading, a soft halo and a floor shadow (like the reference art).
 
-      * listening - calm: slow spin / gentle breathing.
-      * talking   - energetic: faster spin, speech-like pulses + jitter.
+    Two motions, same globe:
+      * listening - calm: slow spin, gentle breathing.
+      * talking   - lively: faster spin, speech-like pulse that swells the mesh.
 
-    Styles:
-      * ``plexus`` - rotating morphing wireframe globe (default / monochrome).
-      * ``virus``  - a spiky capsid (🦠) for the V1RU5 theme.
-      * ``sigil``  - a rotating occult circle (hexagram + inverted pentagram +
-                     horned XX-eyed goat glyph) for Cvlt of Baph0mau5.
-      * ``viking`` - a horned-helmet warrior face inside a spinning code-ring,
-                     for the SK7LD theme.
+    Smoothness: every canvas item (halo, lines, dots) is created ONCE and then
+    moved with `coords`/`itemconfigure` each frame - no per-frame delete/recreate,
+    so there's no flicker and far less CPU churn. Time-based so the motion speed
+    is independent of frame rate.
     """
 
-    def __init__(self, parent, theme: dict, size: int = 230, n: int = 54):
+    def __init__(self, parent, theme: dict, size: int = 230, n: int = 60):
         super().__init__(parent, width=size, height=size, bg=theme["glass2"],
                          highlightthickness=0, bd=0)
         self.theme = theme
-        self.style = theme.get("orb", "plexus")
         self.size = size
-        self.cx = self.cy = size / 2
-        self.R = size * 0.40
+        self.cx = size / 2
+        self.cy = size * 0.46
+        self.R = size * 0.37
+        self.n = n
         self.mode = None
         self._running = False
         self._job = None
         self._t = 0.0
-        self._yaw = 0.0
-        self._pitch = 0.0
-        self._pulse = 0.0
+        self._last = None
         self._energy = 0.0
-        # plexus data
         self._pts = self._fib_sphere(n)
         self._phase = [(i * 0.7) % (2 * math.pi) for i in range(n)]
         self._edges = self._build_edges(self._pts, k=3)
-        # per-style phase tables (deterministic)
-        self._spk_phase = [(i * 1.37) % (2 * math.pi) for i in range(22)]
-        self._tick_phase = [(i * 2.11) % (2 * math.pi) for i in range(28)]
+        self._built = False
+        self._halo = None
+        self._floor = None
+        self._line_ids = []
+        self._dot_ids = []
 
-    # ── geometry (plexus) ───────────────────────────────────────────────
+    # ── geometry ────────────────────────────────────────────────────────
     @staticmethod
     def _fib_sphere(n):
         pts = []
@@ -241,22 +248,17 @@ class VoiceOrb(tk.Canvas):
 
     def set_theme(self, theme: dict):
         self.theme = theme
-        self.style = theme.get("orb", "plexus")
         self.configure(bg=theme["glass2"])
-
-    # ── small helpers ───────────────────────────────────────────────────
-    def _u(self, ux, uy, s=0.8, dx=0.0, dy=0.0):
-        """unit coords (-1..1) -> canvas pixels."""
-        return (self.cx + ux * self.R * s + dx, self.cy + uy * self.R * s + dy)
-
-    @staticmethod
-    def _rot(pts, a):
-        ca, sa = math.cos(a), math.sin(a)
-        return [(x * ca - y * sa, x * sa + y * ca) for (x, y) in pts]
+        self._built = False          # colours rebuilt on next frame
+        self.delete("all")
+        self._halo = self._floor = None
+        self._line_ids = []
+        self._dot_ids = []
 
     # ── control ─────────────────────────────────────────────────────────
     def start(self, mode: str):
         self.mode = mode
+        self._last = None
         if not self._running:
             self._running = True
             self._animate()
@@ -269,317 +271,107 @@ class VoiceOrb(tk.Canvas):
             except Exception:
                 pass
             self._job = None
-        self.delete("all")
 
-    # ── animation driver ────────────────────────────────────────────────
+    # ── one-time item creation ──────────────────────────────────────────
+    def _build_items(self):
+        self.delete("all")
+        glass2 = self.theme["glass2"]
+        # soft halo discs behind the globe (concentric, dim -> transparent-ish)
+        self._halo = []
+        for k, f in enumerate((1.55, 1.3, 1.08)):
+            r = self.R * f
+            col = _mix(glass2, self.theme["glow"], 0.10 + 0.07 * (2 - k))
+            self._halo.append(self.create_oval(self.cx - r, self.cy - r,
+                                               self.cx + r, self.cy + r,
+                                               outline="", fill=col))
+        # floor shadow ellipse
+        fr = self.R * 1.05
+        fy = self.cy + self.R * 1.28
+        self._floor = self.create_oval(self.cx - fr, fy - self.R * 0.12,
+                                       self.cx + fr, fy + self.R * 0.12,
+                                       outline="", fill=_mix(glass2, self.theme["accent"], 0.12))
+        # edges, then dots (drawn last = on top)
+        self._line_ids = [self.create_line(0, 0, 0, 0, fill=glass2, width=1)
+                          for _ in self._edges]
+        self._dot_ids = [self.create_oval(0, 0, 0, 0, outline="", fill=glass2)
+                         for _ in self._pts]
+        self._built = True
+
+    # ── animation ───────────────────────────────────────────────────────
     def _animate(self):
         if not self._running:
             return
-        self._t += 0.05
+        now = time.monotonic()
+        dt = 0.033 if self._last is None else min(0.05, now - self._last)
+        self._last = now
+        self._t += dt
+        if not self._built:
+            self._build_items()
+
         talking = (self.mode == "talking")
         if talking:
-            self._yaw += 0.075
-            burst = max(0.0, math.sin(self._t * 5.0)) ** 2
-            self._pulse = 0.6 * burst + 0.2 * (math.sin(self._t * 11.0) * 0.5 + 0.5)
-            self._energy = 0.45 + 0.55 * burst
+            spin = 0.9
+            amp = 0.16
+            freq = 2.3
+            burst = max(0.0, math.sin(self._t * 4.4)) ** 2
+            pulse = 0.45 * burst + 0.12
+            tgt = 0.45 + 0.55 * burst
+            line_col = _mix(self.theme["glass2"], self.theme["accent2"], 0.85)
+            dot_hi = self.theme["glow"]
         else:
-            self._yaw += 0.032
-            self._pulse = 0.0
-            self._energy = 0.14 + 0.08 * (math.sin(self._t * 1.3) * 0.5 + 0.5)
+            spin = 0.42
+            amp = 0.06
+            freq = 1.2
+            pulse = 0.0
+            tgt = 0.16
+            line_col = _mix(self.theme["glass2"], self.theme["accent"], 0.7)
+            dot_hi = self.theme["accent"]
+        # ease energy toward its target for buttery transitions
+        self._energy += (tgt - self._energy) * min(1.0, dt * 6)
 
-        self.delete("all")
-        style = self.style
-        if style == "virus":
-            self._draw_virus(talking)
-        elif style == "sigil":
-            self._draw_sigil(talking)
-        elif style == "viking":
-            self._draw_viking(talking)
-        else:
-            self._draw_plexus(talking)
-        self._job = self.after(50, self._animate)
-
-    # ── style: plexus globe ─────────────────────────────────────────────
-    def _draw_plexus(self, talking):
-        amp = 0.17 if talking else 0.07
-        freq = 2.4 if talking else 1.3
-        jitter = 0.05 if talking else 0.0
-        line_col = self.theme["accent2"] if talking else self.theme["accent"]
-        dot_col = self.theme["glow"] if talking else self.theme["accent"]
+        yaw = self._t * spin
+        pitch = 0.32 * math.sin(self._t * 0.35)
+        cy_, sy_ = math.cos(yaw), math.sin(yaw)
+        cp_, sp_ = math.cos(pitch), math.sin(pitch)
+        R = self.R
         dim = self.theme["grid"]
-        self._pitch = 0.35 * math.sin(self._t * 0.4)
-        cy_, sy_ = math.cos(self._yaw), math.sin(self._yaw)
-        cp_, sp_ = math.cos(self._pitch), math.sin(self._pitch)
+        glass2 = self.theme["glass2"]
+
         scr = []
         for i, (x, y, z) in enumerate(self._pts):
-            disp = amp * math.sin(self._t * freq + self._phase[i]) + amp * self._pulse
-            if jitter:
-                disp += jitter * math.sin(self._t * 9 + i)
+            disp = amp * math.sin(self._t * freq + self._phase[i]) + amp * pulse
             r = 1.0 + disp
             x, y, z = x * r, y * r, z * r
             x, z = x * cy_ + z * sy_, -x * sy_ + z * cy_
             y, z = y * cp_ - z * sp_, y * sp_ + z * cp_
-            persp = 0.70 + 0.30 * ((z + 1.5) / 3.0)
-            scr.append((self.cx + x * self.R * persp, self.cy + y * self.R * persp, z))
-        for (i, j) in self._edges:
+            persp = 0.72 + 0.28 * ((z + 1.4) / 2.8)
+            scr.append((self.cx + x * R * persp, self.cy + y * R * persp, z))
+
+        # lines: colour fades with average depth (back = dim, front = bright)
+        for idx, (i, j) in enumerate(self._edges):
             x1, y1, z1 = scr[i]
             x2, y2, z2 = scr[j]
-            front = (z1 + z2) * 0.5 > 0
-            self.create_line(x1, y1, x2, y2, fill=line_col if front else dim,
-                             width=2 if front else 1)
-        for (sx, sy, z) in scr:
-            rad = 3.2 if z > 0 else 1.8
-            self.create_oval(sx - rad, sy - rad, sx + rad, sy + rad,
-                             fill=dot_col if z > 0 else dim, outline="")
+            depth = (((z1 + z2) * 0.5) + 1.4) / 2.8      # 0 back .. 1 front
+            col = _mix(dim, line_col, max(0.0, min(1.0, depth)) ** 1.3)
+            self.coords(self._line_ids[idx], x1, y1, x2, y2)
+            self.itemconfigure(self._line_ids[idx], fill=col,
+                               width=2 if depth > 0.6 else 1)
 
-    # ── style: V1RU5 - menacing virus (spiky capsid + fanged face) ──────
-    def _draw_virus(self, talking):
-        acc = self.theme["accent"]                     # green (eyes + fangs)
-        acc2 = self.theme["accent2"]                   # purple (spikes)
-        glow = self.theme["glow"]                      # violet (knobs/glow)
-        dim = self.theme["grid"]
-        body = self.theme.get("panel", self.theme["box"])
-        e = self._energy
-        breathe = 1.0 + 0.03 * math.sin(self._t * (3.0 if talking else 1.4))
-        cr = self.R * 0.52 * breathe                   # capsid-body radius
-        bob = self.R * 0.02 * math.sin(self._t * (2.2 if talking else 1.0))
-        cy0 = self.cy + bob
+        # dots: size + colour by depth, with an energy-driven glow on front nodes
+        for idx, (sx, sy, z) in enumerate(scr):
+            depth = (z + 1.4) / 2.8
+            rad = 1.4 + 2.6 * depth + 1.3 * self._energy * depth
+            col = _mix(_mix(dim, dot_hi, depth), self.theme["glow"],
+                       self._energy * depth * 0.8)
+            self.coords(self._dot_ids[idx], sx - rad, sy - rad, sx + rad, sy + rad)
+            self.itemconfigure(self._dot_ids[idx], fill=col)
 
-        # corona spikes (slowly rotating, purple with glowing knobs)
-        NS = 14
-        base = 0.30 + (0.12 if talking else 0.04)
-        for i in range(NS):
-            ph = self._spk_phase[i]
-            a = (i / NS) * 2 * math.pi + self._yaw
-            wob = (0.09 if talking else 0.04) * math.sin(self._t * (6 if talking else 2.2) + ph)
-            ln = self.R * (base + wob) + self.R * 0.22 * self._pulse
-            x0, y0 = self.cx + math.cos(a) * cr, cy0 + math.sin(a) * cr
-            x1, y1 = self.cx + math.cos(a) * (cr + ln), cy0 + math.sin(a) * (cr + ln)
-            self.create_line(x0, y0, x1, y1, fill=acc2, width=3)
-            kr = 3.0 + 2.4 * e
-            self.create_oval(x1 - kr, y1 - kr, x1 + kr, y1 + kr, fill=glow, outline=acc2)
+        # halo + floor breathe a touch with energy
+        glowf = 0.10 + 0.22 * self._energy
+        for k, hid in enumerate(self._halo):
+            self.itemconfigure(hid, fill=_mix(glass2, self.theme["glow"],
+                                              glowf * (0.5 + 0.25 * (2 - k))))
+        self.itemconfigure(self._floor, fill=_mix(glass2, self.theme["accent"],
+                                                  0.10 + 0.10 * self._energy))
 
-        # body
-        self.create_oval(self.cx - cr, cy0 - cr, self.cx + cr, cy0 + cr,
-                         fill=body, outline=acc2, width=3)
-        self.create_oval(self.cx - cr * 0.9, cy0 - cr * 0.9,
-                         self.cx + cr * 0.9, cy0 + cr * 0.9, outline=dim, width=1)
-
-        def fx(u):
-            return self.cx + u * cr
-
-        def fy(u):
-            return cy0 + u * cr
-
-        # angry green eyes (sharp inward-pointing wedges) + bright cores
-        le = [(-0.60, -0.24), (-0.10, -0.02), (-0.58, 0.08)]
-        re = [(0.60, -0.24), (0.10, -0.02), (0.58, 0.08)]
-        for eye in (le, re):
-            pts = []
-            for u, v in eye:
-                pts += [fx(u), fy(v)]
-            self.create_polygon(pts, fill=acc, outline=glow, width=1)
-        for ex in (-0.36, 0.36):
-            er = 2.5 + 2.6 * e
-            self.create_oval(fx(ex) - er, fy(-0.07) - er, fx(ex) + er, fy(-0.07) + er,
-                             fill=acc, outline="")
-
-        # fanged maw - dark cavity, green interlocking teeth, drips
-        y_t = 0.22
-        gap = 0.22 + 0.10 * e + (0.05 if talking else 0.0)   # maw opens while talking
-        y_b = y_t + gap
-        xL, xR = -0.58, 0.58
-        self.create_polygon(fx(xL), fy(y_t), fx(xR), fy(y_t),
-                            fx(xR), fy(y_b), fx(0.0), fy(y_b + 0.07), fx(xL), fy(y_b),
-                            fill=body, outline=acc, width=1)
-        nt = 7
-        flen = 0.09 + 0.05 * e
-        span = xR - xL
-        for k in range(nt):                               # upper fangs (point down)
-            x0 = xL + span * k / nt
-            x1 = xL + span * (k + 1) / nt
-            self.create_polygon(fx(x0), fy(y_t), fx(x1), fy(y_t),
-                                fx((x0 + x1) / 2), fy(y_t + flen), fill=acc, outline="")
-        for k in range(nt):                               # lower fangs (point up)
-            x0 = xL + span * (k + 0.5) / nt
-            x1 = xL + span * (k + 1.5) / nt
-            if x1 > xR:
-                continue
-            self.create_polygon(fx(x0), fy(y_b), fx(x1), fy(y_b),
-                                fx((x0 + x1) / 2), fy(y_b - flen), fill=acc, outline="")
-        for k in range(0, nt, 2):                         # dripping ooze
-            x = xL + span * (k + 0.5) / nt
-            dl = 0.05 + 0.22 * e
-            self.create_line(fx(x), fy(y_b), fx(x), fy(y_b + dl), fill=acc, width=2)
-            self.create_oval(fx(x) - 2, fy(y_b + dl) - 2, fx(x) + 2, fy(y_b + dl) + 2,
-                             fill=acc, outline="")
-
-    # ── style: occult sigil (⛧) ─────────────────────────────────────────
-    def _draw_sigil(self, talking):
-        acc = self.theme["accent"]        # crimson
-        gold = self.theme["accent2"]      # gold
-        glow = self.theme["glow"]
-        dim = self.theme["grid"]
-        lw = 2 if not talking else 3
-        # outer ritual rings
-        for s, col, w in ((0.98, gold, 2), (0.86, dim, 1), (0.80, gold, 1)):
-            r = self.R * s
-            self.create_oval(self.cx - r, self.cy - r, self.cx + r, self.cy + r,
-                             outline=col, width=w)
-        # perimeter tick-glyphs (counter-rotating little crosses)
-        for i in range(8):
-            a = (i / 8) * 2 * math.pi - self._yaw * 0.6
-            x, y = self.cx + math.cos(a) * self.R * 0.90, self.cy + math.sin(a) * self.R * 0.90
-            self.create_line(x - 4, y, x + 4, y, fill=gold, width=1)
-            self.create_line(x, y - 4, x, y + 4, fill=gold, width=1)
-        # hexagram (two triangles), slow spin
-        up = self._rot([(0, -0.72), (0.624, 0.36), (-0.624, 0.36)], self._yaw * 0.5)
-        dn = self._rot([(0, 0.72), (0.624, -0.36), (-0.624, -0.36)], self._yaw * 0.5)
-        for tri in (up, dn):
-            pts = []
-            for ux, uy in tri:
-                pts += list(self._u(ux, uy, s=1.0))
-            self.create_polygon(pts, outline=acc, width=lw, fill="")
-        # inverted pentagram (point down), opposite spin
-        star = []
-        for k in range(5):
-            a = -math.pi / 2 + k * (2 * math.pi / 5)
-            star.append((math.cos(a) * 0.46, -math.sin(a) * 0.46))  # flip -> point down
-        star = self._rot(star, -self._yaw * 0.5)
-        order = [0, 2, 4, 1, 3, 0]
-        pen = []
-        for k in order:
-            pen += list(self._u(star[k][0], star[k][1], s=1.0, dy=self.R * 0.04))
-        self.create_line(*pen, fill=glow if talking else acc, width=lw)
-        # horned goat glyph in the middle
-        gx, gy = self.cx, self.cy + self.R * 0.05
-        # horns (two arcs sweeping up-out)
-        self.create_arc(gx - self.R * 0.42, gy - self.R * 0.52,
-                        gx + self.R * 0.02, gy - self.R * 0.04,
-                        start=270, extent=120, style=tk.ARC, outline=acc, width=lw)
-        self.create_arc(gx - self.R * 0.02, gy - self.R * 0.52,
-                        gx + self.R * 0.42, gy - self.R * 0.04,
-                        start=150, extent=120, style=tk.ARC, outline=acc, width=lw)
-        # XX eyes
-        for ex in (-0.14, 0.14):
-            cxp, cyp = gx + ex * self.R, gy
-            d = self.R * 0.06
-            self.create_line(cxp - d, cyp - d, cxp + d, cyp + d, fill=gold, width=lw)
-            self.create_line(cxp - d, cyp + d, cxp + d, cyp - d, fill=gold, width=lw)
-        # little fanged snout
-        self.create_line(gx - self.R * 0.10, gy + self.R * 0.14,
-                         gx, gy + self.R * 0.24,
-                         gx + self.R * 0.10, gy + self.R * 0.14,
-                         fill=acc, width=lw)
-        # crescent at the very top + flame flicker when talking
-        self.create_arc(self.cx - self.R * 0.12, self.cy - self.R * 1.04,
-                        self.cx + self.R * 0.12, self.cy - self.R * 0.80,
-                        start=200, extent=140, style=tk.ARC, outline=gold, width=1)
-        if talking:
-            fy = self.cy - self.R * 0.70
-            for k in (-1, 0, 1):
-                j = 0.04 * self.R * math.sin(self._t * 13 + k)
-                self.create_line(self.cx + k * self.R * 0.05, fy + self.R * 0.10,
-                                 self.cx + k * self.R * 0.04 + j, fy - self.R * 0.06,
-                                 fill=glow, width=2)
-
-    # ── style: cyber-viking ─────────────────────────────────────────────
-    def _draw_viking(self, talking):
-        acc = self.theme["accent"]        # cyan
-        acc2 = self.theme["accent2"]      # purple
-        glow = self.theme["glow"]
-        dim = self.theme["grid"]
-        lw = 2 if not talking else 3
-        bob = self.R * 0.03 * math.sin(self._t * (3.0 if talking else 1.2))
-        # spinning "code ring" of ticks
-        n = len(self._tick_phase)
-        for i, ph in enumerate(self._tick_phase):
-            a = (i / n) * 2 * math.pi + self._yaw
-            lit = (math.sin(self._t * (7 if talking else 3) + ph) > 0.2)
-            r0 = self.R * 0.98
-            r1 = self.R * (1.06 if lit else 1.02)
-            x0, y0 = self.cx + math.cos(a) * r0, self.cy + math.sin(a) * r0
-            x1, y1 = self.cx + math.cos(a) * r1, self.cy + math.sin(a) * r1
-            self.create_line(x0, y0, x1, y1, fill=(glow if lit else dim),
-                             width=2 if lit else 1)
-        rr = self.R * 0.90
-        self.create_oval(self.cx - rr, self.cy - rr, self.cx + rr, self.cy + rr,
-                         outline=acc2, width=1)
-
-        fr = self.R * 0.80
-        vio = acc2                               # official SK7LD viking purple
-        dark = self.theme["glass2"]              # negative-space grooves
-        eye_col = glow if talking else acc
-
-        def P(u, v):
-            return (self.cx + u * fr, self.cy + v * fr + bob)
-
-        def poly(pts, fill, outline="", w=1, smooth=True):
-            flat = []
-            for (x, y) in pts:
-                px, py = P(x, y)
-                flat += [px, py]
-            self.create_polygon(flat, fill=fill, outline=outline, width=w, smooth=smooth)
-
-        # horns - big filled crescents sweeping up & out (drawn behind helmet)
-        horn = [(0.40, -0.40), (0.68, -0.32), (0.96, -0.50), (1.04, -0.80),
-                (0.93, -1.12), (0.84, -1.10), (0.84, -0.84), (0.72, -0.58), (0.48, -0.50)]
-        poly([(-x, y) for x, y in horn], vio, dark, 1)
-        poly(horn, vio, dark, 1)
-
-        # helmet dome (filled) + ridge lines + centre flame crest
-        self.create_arc(*(P(-0.46, -1.02) + P(0.46, 0.14)),
-                        start=8, extent=164, style=tk.CHORD, fill=vio, outline=vio)
-        for rx in (-0.30, -0.12, 0.12, 0.30):
-            a, b = P(rx * 0.4, -0.92), P(rx, -0.46)
-            self.create_line(a[0], a[1], b[0], b[1], fill=dark, width=2)
-        flick = (0.05 if talking else 0.015) * self.R * math.sin(self._t * 12)
-        fl, ft, frt = P(-0.06, -0.52), P(0.0, -0.84), P(0.06, -0.52)
-        self.create_polygon(fl[0], fl[1], ft[0] + flick, ft[1], frt[0], frt[1],
-                            fill=dark, outline="", smooth=True)
-
-        # studded brow band
-        poly([(-0.52, -0.46), (0.52, -0.46), (0.46, -0.26), (-0.46, -0.26)], vio, dark, 1,
-             smooth=False)
-        for i in range(7):
-            rp = P(-0.40 + 0.80 * i / 6, -0.36)
-            self.create_oval(rp[0] - 2.4, rp[1] - 2.4, rp[0] + 2.4, rp[1] + 2.4,
-                             fill=dark, outline="")
-
-        # face mass (cheeks/brow)
-        poly([(-0.46, -0.26), (-0.56, 0.10), (-0.42, 0.42), (-0.20, 0.32),
-              (0.20, 0.32), (0.42, 0.42), (0.56, 0.10), (0.46, -0.26)], vio)
-
-        # furrowed angry brows + centre creases
-        self.create_line(*(P(-0.44, -0.18) + P(-0.10, -0.03)), fill=dark, width=3)
-        self.create_line(*(P(0.44, -0.18) + P(0.10, -0.03)), fill=dark, width=3)
-        self.create_line(*(P(-0.06, -0.12) + P(-0.06, 0.04)), fill=dark, width=2)
-        self.create_line(*(P(0.06, -0.12) + P(0.06, 0.04)), fill=dark, width=2)
-
-        # eyes (glow with energy)
-        for ex in (-0.26, 0.26):
-            ep = P(ex, 0.00)
-            er = 2.6 + 2.4 * self._energy
-            self.create_oval(ep[0] - er, ep[1] - er, ep[0] + er, ep[1] + er,
-                             fill=eye_col, outline="")
-
-        # nose
-        self.create_line(P(0.0, 0.02)[0], P(0.0, 0.02)[1],
-                         P(-0.07, 0.26)[0], P(-0.07, 0.26)[1],
-                         P(0.07, 0.26)[0], P(0.07, 0.26)[1],
-                         fill=dark, width=2, smooth=True)
-
-        # braided beard (filled, pointed) with strand grooves + mouth gap
-        poly([(-0.52, 0.08), (-0.58, 0.38), (-0.46, 0.68), (-0.24, 0.94),
-              (0.0, 1.14), (0.24, 0.94), (0.46, 0.68), (0.58, 0.38), (0.52, 0.08),
-              (0.30, 0.16), (0.10, 0.44), (0.0, 0.42), (-0.10, 0.44), (-0.30, 0.16)],
-             vio, dark, 1)
-        # moustache over the beard top
-        self.create_line(*(P(-0.02, 0.30) + P(-0.32, 0.22)), fill=dark, width=3, smooth=True)
-        self.create_line(*(P(0.02, 0.30) + P(0.32, 0.22)), fill=dark, width=3, smooth=True)
-        # strand grooves, flickering while talking
-        for sx in (-0.30, -0.12, 0.12, 0.30):
-            wig = (0.05 if talking else 0.02) * self.R * math.sin(self._t * 8 + sx * 7)
-            a, b, tip = P(sx, 0.46), P(sx * 0.6, 0.82), P(0.0, 1.06)
-            self.create_line(a[0], a[1], b[0] + wig, b[1], tip[0], tip[1],
-                             fill=dark, width=2, smooth=True)
+        self._job = self.after(16, self._animate)       # ~60 fps target

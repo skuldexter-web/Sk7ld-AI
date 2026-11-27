@@ -40,7 +40,7 @@ BANNER = f"""{Y}{B}
 class VikingCLI:
     def __init__(self):
         from . import config
-        self.client = OllamaClient(OLLAMA_BASE_URL, DEFAULT_MODEL)
+        self.client = OllamaClient(OLLAMA_BASE_URL, config.get_model())   # base only
         self.client.system_prompt = config.get_system_prompt()   # load saved persona
         self.target: Optional[str] = None
         self.code_mode = False
@@ -64,10 +64,10 @@ class VikingCLI:
         print(f"{NC}\n")
 
     def _code_oneshot(self, prompt: str):
-        from .ollama_client import CODE_SYSTEM_PROMPT, extract_code
+        from .ollama_client import extract_code
         print(f"{G}", end="", flush=True)
         buf = []
-        for token in self.client.chat_stream(prompt, system=CODE_SYSTEM_PROMPT, few_shot=False):
+        for token in self.client.code_stream(prompt):
             sys.stdout.write(token); sys.stdout.flush(); buf.append(token)
         print(f"{NC}\n")
         code, ext = extract_code("".join(buf))
@@ -90,11 +90,13 @@ class VikingCLI:
         print(f"  Ollama : {up}\n")
 
     def _models(self):
-        models = self.client.list_models() or []
-        print(f"\n{B}{Y}  Installed models:{NC}")
-        for m in models:
+        from . import ALLOWED_MODELS
+        installed = set(self.client.list_models() or [])
+        print(f"\n{B}{Y}  Chat/code models (base only):{NC}")
+        for m in ALLOWED_MODELS:
+            state = f"{G}installed{NC}" if m in installed else f"{D}not pulled{NC}"
             star = f" {G}<- active{NC}" if m == self.client.model else ""
-            print(f"  {C}-{NC} {m}{star}")
+            print(f"  {C}-{NC} {m}  [{state}]{star}")
         print()
 
     def _arsenal(self):
@@ -218,7 +220,13 @@ class VikingCLI:
             if low == "target clear":
                 self.target = None; print("  [OK] target cleared"); continue
             if low.startswith("model "):
-                self.client.model = text.split(None, 1)[1].strip()
+                from . import ALLOWED_MODELS, config
+                want = text.split(None, 1)[1].strip()
+                if want not in ALLOWED_MODELS:
+                    print(f"  {R}[X] base models only:{NC} " + ", ".join(ALLOWED_MODELS))
+                    continue
+                self.client.model = want
+                config.set_model(want)
                 print(f"  [OK] model -> {self.client.model}"); continue
             if low.startswith("target "):
                 self.target = text.split(None, 1)[1].strip()
